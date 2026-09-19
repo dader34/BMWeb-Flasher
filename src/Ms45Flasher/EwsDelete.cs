@@ -41,8 +41,8 @@ namespace MS45_Flasher
         /// 2004), reports the same 0044570 hardware reference but lays its
         /// globals out differently: it has no store to r13-0x3C30 at all and
         /// only one to -0x3C2F, at a completely different address. The patch
-        /// does not transfer to it, which is why the version — not just the
-        /// hardware reference — is what gates this.
+        /// does not transfer to it, which is why the version - not just the
+        /// hardware reference - is what gates this.
         /// </summary>
         public const string SupportedProgramVersion = "0044570LO02S";
 
