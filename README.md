@@ -17,18 +17,18 @@ the transmission (TCU).
 
 ## What's different from upstream
 
-- **Runs on macOS and Linux.** WPF → Avalonia; .NET Framework 4.5.2 → .NET 8.
-  `kernel32!SetThreadExecutionState` (keep-awake) → `caffeinate` on macOS.
+- **Runs on macOS and Linux.** WPF to Avalonia; .NET Framework 4.5.2 to .NET 8.
+  `kernel32!SetThreadExecutionState` (keep-awake) becomes `caffeinate` on macOS.
 - **No Windows install assumptions.** Serial ports are `/dev/cu.usbserial-*`
   device paths, not `COM1`. Settings live in a JSON file under the user config
   dir instead of an `.exe.config`. EDIABAS's Windows-1252 dependency is handled
   by registering `CodePagesEncodingProvider` at startup (it is not built into
   .NET 8, which otherwise crashed every `new EdiabasNet()`).
-- **EWS delete** (MS45.1 program `0044570LO02S` only) — patches the immobilizer
+- **EWS delete** (MS45.1 program `0044570LO02S` only). Patches the immobilizer
   check out of the program before a full-binary flash. Gated on the DME's own
   program reference, read over the wire via `ZIF_LESEN` ($22 $2503), so it will
   not enable on a car running a different program.
-- **Fault Codes tab** — read / clear / export CSV, with a per-fault detail
+- **Fault Codes tab**: read / clear / export CSV, with a per-fault detail
   window, for either the **DME** (`ms450ds0.prg`, with SAE P-codes) or the
   **TCU** (`gs20.prg`).
 
@@ -39,11 +39,11 @@ the transmission (TCU).
 - **.NET 8 SDK** (or newer with roll-forward). Verified on .NET 10 SDK / macOS
   arm64.
 - An **INPA-compatible OBDII cable** (K+DCAN / FTDI). Set the cable latency to
-  1 ms.
-- The EDIABAS SGBD files for your car. The app needs at minimum `ms450ds0.prg`
-  (or `10MDS45.prg`) for the DME and, for transmission faults, `gs20.prg` — plus
-  whatever group files they reference. Point the app's ECU path at the folder
-  that holds them.
+  1 ms. The app auto-detects the cable; you do not need to know the port name.
+- The EDIABAS SGBD files for your car. On first launch the app offers to
+  download the E46 data set for you, so you normally do not need to provide
+  these manually. If you already have an EDIABAS install, you can point the app
+  at that folder instead (see [First run](#first-run)).
 
 `EdiabasLib` is vendored as a git submodule and built from source; you do **not**
 need a prebuilt `EdiabasLib.dll`.
@@ -61,7 +61,7 @@ dotnet run  -c Release --project src/Ms45Flasher
 `build/setup.sh` is idempotent. It applies `build/ediabaslib-net8.patch`, which
 adds a plain `net8.0` target framework to the EdiabasLib submodule (upstream
 targets only `net*-windows` and `net481`). Nothing in the OBD serial path is
-Windows-specific — `EdInterfaceObd` drives `System.IO.Ports.SerialPort`, which
+Windows-specific: `EdInterfaceObd` drives `System.IO.Ports.SerialPort`, which
 is cross-platform on .NET 8+.
 
 To run the tests (the EWS-delete patch has a full test suite):
@@ -77,19 +77,39 @@ unless `MS45_STOCK_BIN` and `MS45_EWS_BIN` point at local copies.
 
 ## Usage
 
-Settings are stored automatically; set them from the UI.
+Settings (serial port, ECU folder, SGBD) are stored automatically and reused on
+the next launch.
 
-1. **Set Serial Port** — pick your cable (e.g. `/dev/cu.usbserial-XXXX`).
-2. **Load SGBD (.PRG)** — point at your ECU folder / `ms450ds0.prg` if it is not
-   already configured.
-3. **Identify DME** — connect the cable to the OBDII port with the ignition on,
-   then click. On success the DME information panel fills in, including the
-   program reference used to gate EWS delete.
+### First run
+
+On first launch, if no SGBD data is set up, a setup screen offers three choices:
+
+- **Download required files** downloads the E46 data set and stores it under the
+  app data folder (`~/Library/Application Support/bmweb-flasher/ecu` on macOS).
+  A progress bar shows the download.
+- **Choose an existing EDIABAS folder** points the app at a folder you already
+  have (for example an EDIABAS `Ecu` directory). It is validated for the
+  required SGBDs before it is accepted.
+- **Skip** leaves it unset; you can configure it later with **Load SGBD**.
+
+The app reads SGBDs from whichever folder it ends up pointed at. Downloading is
+just one way to fill that path; **Load SGBD** can repoint it anywhere afterward,
+and the choice persists.
+
+The serial port is **auto-detected** on launch (it filters out non-cable ports
+and prefers an FTDI / K+DCAN adapter). **Set Serial Port** lets you override the
+choice, rescan after plugging in, or type a path manually.
+
+### Identify
+
+Connect the cable to the OBDII port with the ignition on, then **Identify DME**.
+On success the DME information panel fills in, including the program reference
+used to gate EWS delete.
 
 ### Reading
 
 - **Tune only:** click **Read DME**.
-- **Full backup:** check **Full Binary** first. This produces two files — the
+- **Full backup:** check **Full Binary** first. This produces two files: the
   `_Flash` file (external flash) and the `_MPC` file (internal CPU flash). Keep
   both.
 
@@ -97,12 +117,12 @@ Settings are stored automatically; set them from the UI.
 
 Make a full backup first.
 
-**Tune** (parameter region only — recoverable, cannot brick the DME):
-- **Load File** → a tune-sized file (`0x1D000`) with Full Binary **unchecked**,
-  or a full binary with Full Binary **checked** (the tune slice is extracted for
-  you) → **Flash Tune**.
+**Tune** (parameter region only; recoverable, cannot brick the DME):
+- **Load File**, pick a tune-sized file (`0x1D000`) with Full Binary
+  **unchecked** (or a full binary with Full Binary **checked**, which extracts
+  the tune slice for you), then **Flash Tune**.
 
-**Full program** (external + MPC — this is the path that can brick the DME):
+**Full program** (external + MPC; this is the path that can brick the DME):
 - Check **Full Binary**, **Load File** (external), **Load File 2 (MPC)**,
   optionally tick **EWS Delete**, then **Flash Program**.
 - If the files do not match you can render the DME unbootable, recoverable only
@@ -122,7 +142,7 @@ return on the next drive cycle.
 
 Verified on a real E46 (325i, MS45.1 + GS20):
 
-- Tune flash — write then read-back is byte-identical to the flashed file.
+- Tune flash: write then read-back is byte-identical to the flashed file.
 - DME + TCU fault read / clear / export.
 - Serial + security-access + memory read/write over a macOS FTDI cable.
 
@@ -138,8 +158,8 @@ not a code bug). `gs20.prg` is the only automatic TCU the M54 E46 shipped.
 
 ## Built using
 
-* [EdiabasLib](https://github.com/uholeschak/ediabaslib) — communicates with the ECUs
-* [Avalonia](https://avaloniaui.net) — cross-platform UI
+* [EdiabasLib](https://github.com/uholeschak/ediabaslib): communicates with the ECUs
+* [Avalonia](https://avaloniaui.net): cross-platform UI
 
 ## Acknowledgments
 
@@ -149,7 +169,7 @@ extends that work.
 
 ## License
 
-GNU General Public License v3.0 — see [LICENSE](LICENSE).
+GNU General Public License v3.0. See [LICENSE](LICENSE).
 
 ## Disclaimer
 
