@@ -1165,7 +1165,7 @@ namespace BmwebFlasher
 
                     FlashDME.IsEnabled = true;
                     FlashProgram.IsEnabled = true;
-                }
+                    }
             }
 
             if (Global.openedFlash != null)
@@ -1585,6 +1585,11 @@ namespace BmwebFlasher
                 }
                 else
                 {
+                    // The MPC (internal) write must happen: the program signature
+                    // the DME verifies (FLASH_SIGNATUR_PRUEFEN Programm) spans
+                    // external + MPC together, so an external-only write leaves
+                    // the program invalid ("Programm nicht vorhanden"). There is
+                    // no external-only shortcut for a program flash.
                     FlashLog.Note("PHASE: write internal MPC 0x0..0x6FFFF (brick-capable step)");
                     SetStatus("Flashing Internal Program");
                     await Task.Run(() => success = FlashBlock(ediabas, Global.openedMPC, flashMPCStart, flashMPCEnd));
