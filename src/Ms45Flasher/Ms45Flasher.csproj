@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <RootNamespace>MS45_Flasher</RootNamespace>
+    <AssemblyName>Ms45Flasher</AssemblyName>
+    <!-- EdiabasLib's multi-targeting evaluates Windows TFMs during restore even
+         when we only build net8.0, so the SDK needs this to resolve them. -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Text.Encoding.CodePages" Version="8.0.0" />
+    <PackageReference Include="Avalonia" Version="12.1.2" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.2" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.2" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="12.1.2" />
+    <PackageReference Include="Avalonia.Controls.DataGrid" Version="12.1.2" />
+    <PackageReference Include="AvaloniaUI.DiagnosticsSupport" Version="2.2.3">
+      <IncludeAssets Condition="'$(Configuration)' != 'Debug'">None</IncludeAssets>
+      <PrivateAssets Condition="'$(Configuration)' != 'Debug'">All</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- EdiabasLib's own Directory.Build.props chain does not reach this repo's
+         root, so EnableWindowsTargeting has to ride along on the reference for
+         its Windows TFMs to evaluate during restore. -->
+    <ProjectReference Include="..\..\external\ediabaslib\EdiabasLib\EdiabasLib\EdiabasLib.csproj"
+                      SetTargetFramework="TargetFramework=net8.0"
+                      GlobalPropertiesToRemove="">
+      <AdditionalProperties>EnableWindowsTargeting=true</AdditionalProperties>
+    </ProjectReference>
+  </ItemGroup>
+</Project>
