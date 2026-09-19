@@ -27,7 +27,9 @@ the transmission (TCU).
 - **EWS delete** (MS45.1 program `0044570LO02S` only). Patches the immobilizer
   check out of the program before a full-binary flash. Gated on the DME's own
   program reference, read over the wire via `ZIF_LESEN` ($22 $2503), so it will
-  not enable on a car running a different program.
+  not enable on a car running a different program. **EWS delete requires a full
+  program flash** (external + MPC); there is no external-only shortcut, so it is
+  the brick-capable path (see below).
 - **Fault Codes tab**: read / clear / export CSV, with a per-fault detail
   window, for either the **DME** (`ms450ds0.prg`, with SAE P-codes) or the
   **TCU** (`gs20.prg`).
@@ -125,6 +127,16 @@ Make a full backup first.
 **Full program** (external + MPC; this is the path that can brick the DME):
 - Check **Full Binary**, **Load File** (external), **Load File 2 (MPC)**,
   optionally tick **EWS Delete**, then **Flash Program**.
+- Both regions are always written together. The program signature
+  (`FLASH_SIGNATUR_PRUEFEN Programm`) is computed over the external flash and the
+  MPC as one, and finalizes only after the MPC block, so **there is no
+  external-only / skip-MPC flash** -- writing just the external region leaves the
+  program invalid (`Programm nicht vorhanden`). This is why **EWS delete needs a
+  full program flash**: the EWS patch is in the external program, but the program
+  is not valid until the MPC block finalizes the signature.
+- A failed program flash is usually recoverable: the MPC bootloader lets the DME
+  keep identifying over OBD, so you can re-flash a valid full program. Keep a
+  known-good external + MPC pair, and ideally a BDM cable, on hand.
 - If the files do not match you can render the DME unbootable, recoverable only
   with a BDM tool. The app does basic checking but it is not foolproof.
 
