@@ -20,6 +20,55 @@ namespace MS45_Flasher
             InitializeComponent();
             Title = Global.Title;
             ModuleSelect.SelectedIndex = 0; // DME by default
+
+            // Auto-detect the cable if none is saved yet.
+            if (string.IsNullOrEmpty(Global.Port))
+            {
+                string auto = Ports.AutoDetect();
+                if (!string.IsNullOrEmpty(auto))
+                    Global.Port = auto;
+            }
+
+            // Offer to fetch the SGBD data on first run, once the window is up.
+            Opened += async (_, _) =>
+            {
+                if (!string.IsNullOrEmpty(Global.Port))
+                    SetStatus("Detected port: " + Global.Port);
+                await MaybeBootstrapEcuAsync();
+            };
+        }
+
+        /// <summary>
+        /// On first run there are no SGBD files, and without them no job can
+        /// run. Show the setup window so the user can download them, point at an
+        /// existing EDIABAS folder, or skip. Everything is opt-in.
+        /// </summary>
+        private async Task MaybeBootstrapEcuAsync()
+        {
+            if (EcuBootstrap.HasEcuData(Global.ecuPath))
+                return; // already configured with valid data
+
+            // A previous run may have downloaded them to the default location.
+            if (EcuBootstrap.HasEcuData(EcuBootstrap.DefaultEcuPath))
+            {
+                Global.ecuPath = EcuBootstrap.DefaultEcuPath;
+                Global.sgbd = "ms450ds0.prg";
+                return;
+            }
+
+            var setup = new SetupWindow();
+            await setup.ShowDialog(this);
+
+            if (!string.IsNullOrEmpty(setup.Result))
+            {
+                Global.ecuPath = setup.Result;
+                Global.sgbd = "ms450ds0.prg";
+                SetStatus("ECU data ready. Connect the cable and Identify DME.");
+            }
+            else
+            {
+                SetStatus("No ECU data set up. Use Load SGBD to pick your own folder.");
+            }
         }
 
         // --- UI helpers -----------------------------------------------------
@@ -35,7 +84,7 @@ namespace MS45_Flasher
         /// <summary>
         /// Replaces WPF MessageBox.Show(..., YesNo), which has no Avalonia
         /// equivalent. Returns true for "yes". Defaults to No, matching the
-        /// original's MessageBoxResult.No default — these prompts all guard
+        /// original's MessageBoxResult.No default - these prompts all guard
         /// against flashing a mismatched file.
         /// </summary>
         private async Task<bool> ConfirmAsync(string message, string title)
@@ -110,17 +159,9 @@ namespace MS45_Flasher
 
         private async void SetPort_Click(object sender, RoutedEventArgs e)
         {
-            // Windows had a fixed "COM1" default in App.config. On macOS the
-            // cable shows up as /dev/cu.usbserial-*, so let the user pick.
-            var ports = new List<string>();
-            try
-            {
-                ports.AddRange(System.IO.Ports.SerialPort.GetPortNames());
-            }
-            catch (Exception)
-            {
-                // GetPortNames can throw on some platforms; the manual box still works.
-            }
+            // Auto-detect ranks likely cables first (FTDI / K+DCAN); the manual
+            // box is the fallback for anything not detected.
+            var ports = Ports.List();
 
             var dialog = new Window
             {
@@ -135,8 +176,26 @@ namespace MS45_Flasher
             var manual = new TextBox { Text = Global.Port ?? string.Empty, PlaceholderText = "/dev/cu.usbserial-A1B2C3D4" };
             combo.SelectionChanged += (_, _) => { if (combo.SelectedItem is string s) manual.Text = s; };
 
+            // Preselect the current port if it is in the list, otherwise the top
+            // auto-detected candidate.
+            int cur = ports.IndexOf(Global.Port ?? string.Empty);
+            if (cur >= 0) combo.SelectedIndex = cur;
+            else if (ports.Count > 0 && string.IsNullOrEmpty(manual.Text)) combo.SelectedIndex = 0;
+
+            var refresh = new Button { Content = "Rescan" };
+            refresh.Click += (_, _) =>
+            {
+                var again = Ports.List();
+                combo.ItemsSource = again;
+                if (again.Count > 0) combo.SelectedIndex = 0;
+            };
+
             var ok = new Button { Content = "OK", MinWidth = 90, IsDefault = true };
             ok.Click += (_, _) => { Global.Port = manual.Text?.Trim() ?? string.Empty; dialog.Close(); };
+
+            string detected = ports.Count == 0
+                ? "No cable detected. Enter the port path manually."
+                : "Detected ports (best guess first):";
 
             dialog.Content = new StackPanel
             {
@@ -144,8 +203,17 @@ namespace MS45_Flasher
                 Spacing = 10,
                 Children =
                 {
-                    new TextBlock { Text = "Detected ports:" },
-                    combo,
+                    new TextBlock { Text = detected },
+                    new StackPanel
+                    {
+                        Orientation = Avalonia.Layout.Orientation.Horizontal,
+                        Spacing = 8,
+                        Children =
+                        {
+                            new ContentControl { Content = combo, Width = 320 },
+                            refresh,
+                        }
+                    },
                     new TextBlock { Text = "Port device path:" },
                     manual,
                     new StackPanel
@@ -376,7 +444,7 @@ namespace MS45_Flasher
                 faultCount_Box.Text = rows.Count == 0 ? "No fault codes stored" : rows.Count + " fault(s)";
                 SetStatus(rows.Count == 0
                     ? "No fault codes"
-                    : "Read " + rows.Count + " fault(s) — double-click a row for details");
+                    : "Read " + rows.Count + " fault(s). Double-click a row for details.");
             }
             catch (Exception ex)
             {
@@ -606,7 +674,7 @@ namespace MS45_Flasher
         {
             if (_lastFaults == null || _lastFaults.Count == 0)
             {
-                SetStatus("Nothing to export — read fault codes first");
+                SetStatus("Nothing to export. Read fault codes first.");
                 return;
             }
 
@@ -700,7 +768,7 @@ namespace MS45_Flasher
                 };
                 var value = new TextBlock
                 {
-                    Text = string.IsNullOrWhiteSpace(fields[r, 1]) ? "—" : fields[r, 1],
+                    Text = string.IsNullOrWhiteSpace(fields[r, 1]) ? "n/a" : fields[r, 1],
                     TextWrapping = Avalonia.Media.TextWrapping.Wrap,
                     Margin = new Avalonia.Thickness(0, 4, 0, 4),
                 };
@@ -750,7 +818,7 @@ namespace MS45_Flasher
         /// The gate is the DME's own PROGRAM reference, read by ZIF_LESEN
         /// (KWP2000 $2503 ProgrammReferenz) during identify. That is a
         /// different field from DATEN_REFERENZ ($2504), which reports the data
-        /// reference and reads LO00S on a car whose program is LO02S — so the
+        /// reference and reads LO00S on a car whose program is LO02S, so the
         /// data reference cannot tell the two MS45.1 programs apart, and
         /// neither can the hardware reference, which is 0044570 for both.
         ///
@@ -885,8 +953,8 @@ namespace MS45_Flasher
                 // macOS/Windows both raise this when the device node is held by
                 // another process, or (rarely) on a permissions problem.
                 return "The port " + port + " is in use by another program (or access was denied).\n\n" +
-                       "Close any other diagnostic tool that may have it open — INPA, ISTA, a serial " +
-                       "monitor, or a previous session of this app — then try again.";
+                       "Close any other diagnostic tool that may have it open (INPA, ISTA, a serial " +
+                       "monitor, or a previous session of this app), then try again.";
             }
             catch (System.IO.FileNotFoundException)
             {
@@ -1314,7 +1382,7 @@ namespace MS45_Flasher
         {
             if (data == null || data.Length == 0)
             {
-                SetStatus("Nothing to save — the read returned no data");
+                SetStatus("Nothing to save. The read returned no data.");
                 return;
             }
 

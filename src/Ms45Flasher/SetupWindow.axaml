@@ -1,0 +1,48 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="MS45_Flasher.SetupWindow"
+        Width="520" Height="340"
+        CanResize="False"
+        WindowStartupLocation="CenterScreen"
+        Title="BMWeb Flasher Setup">
+  <Grid Margin="28">
+
+    <!-- ===== Choice view ===== -->
+    <StackPanel x:Name="ChoicePanel" Spacing="16" VerticalAlignment="Center">
+      <TextBlock Text="Set up ECU data" FontSize="20" FontWeight="SemiBold"/>
+      <TextBlock TextWrapping="Wrap" Opacity="0.8"
+                 Text="BMWeb Flasher needs the EDIABAS SGBD files to talk to your car. Choose how to provide them."/>
+
+      <Border BorderBrush="#40808080" BorderThickness="1" CornerRadius="6" Padding="16">
+        <StackPanel Spacing="12">
+          <StackPanel Spacing="4">
+            <Button x:Name="DownloadButton" Content="Download required files (~60 MB)"
+                    HorizontalAlignment="Stretch" Click="Download_Click"/>
+            <TextBlock Opacity="0.6" FontSize="12" TextWrapping="Wrap"
+                       Text="Downloads the E46 data set and stores it in your app data folder."/>
+          </StackPanel>
+
+          <StackPanel Spacing="4">
+            <Button x:Name="FolderButton" Content="Choose an existing EDIABAS folder…"
+                    HorizontalAlignment="Stretch" Click="Folder_Click"/>
+            <TextBlock Opacity="0.6" FontSize="12" TextWrapping="Wrap"
+                       Text="Point at a folder that already contains ms450ds0.prg / D_MOTOR.grp (e.g. an EDIABAS install)."/>
+          </StackPanel>
+        </StackPanel>
+      </Border>
+
+      <Button x:Name="SkipButton" Content="Skip for now" HorizontalAlignment="Right"
+              Click="Skip_Click"/>
+    </StackPanel>
+
+    <!-- ===== Download view ===== -->
+    <StackPanel x:Name="DownloadPanel" Spacing="18" VerticalAlignment="Center" IsVisible="False">
+      <TextBlock Text="Downloading ECU data" FontSize="20" FontWeight="SemiBold"/>
+      <TextBlock x:Name="DownloadStatus" TextWrapping="Wrap" Opacity="0.8"
+                 Text="Starting download…"/>
+      <ProgressBar x:Name="DownloadProgress" Minimum="0" Maximum="100" Value="0" Height="22"/>
+      <TextBlock x:Name="DownloadPercent" HorizontalAlignment="Right" Opacity="0.7"/>
+    </StackPanel>
+
+  </Grid>
+</Window>
