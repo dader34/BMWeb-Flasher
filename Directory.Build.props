@@ -1,0 +1,9 @@
+<Project>
+  <PropertyGroup>
+    <!-- EdiabasLib multi-targets net*-windows TFMs. Even when we only ever build
+         its net8.0 target, the SDK evaluates every TFM in the list during
+         restore and refuses without this. It does not make our output
+         Windows-specific. -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+</Project>

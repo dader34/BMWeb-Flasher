@@ -1,71 +1,160 @@
-# MS45 Flasher
-Tool to read and flash the MS45 DME. Can read/write full and partial binaries from the MS45.0 and MS45.1. It will automatically correct checksums and sign files that are flashed to the DME.
+# BMWeb Flasher
 
+A macOS/Linux port of the MS45 DME flasher, built with **.NET 8 + Avalonia**
+instead of the original WPF / .NET Framework. Reads and flashes full and partial
+binaries from the MS45.0 and MS45.1, auto-correcting checksums and signing files
+before they are written.
 
-### Prerequisites
-This application uses .Net Framework 4.5.2
+This fork keeps the original's flashing logic byte-for-byte and adds a
+cross-platform UI, an EWS-delete option, and a fault-code reader for the DME and
+the transmission (TCU).
 
-Any INPA-compatible OBDII cable should work with this application. Make sure your cable latency is set to 1ms
+> Fork of [terraphantm/MS45-Flasher](https://github.com/terraphantm/MS45-Flasher).
+> The checksum/signature and flash sequences are unchanged from upstream; the
+> port replaces the Windows-only shell around them.
 
-You will need EdiabasLib.dll to compile and run this application.
-The application assumes you have an ediabas installation in the default directory along with E46, E60, E65, E83, or E85 daten files.
-If you don't have / want Ediabas installed, you will need to find a copy of MS450DS0.prg or 10MDS45.prg, and set the .config file to reflect the directory and filename of those files.
-Most of my testing has been with MS450DS0.prg, so I recommend using that.
+---
 
+## What's different from upstream
 
-### Usage
-Change the settings as necessary in the 'MS45 Flasher.exe.config' file. 
-Default port is COM1, default sgbd directory is C:\Ediabas\ECU, and default sgbd is D_Motor.GRP (should automatically resolve to MS450DS0.prg if connected to an MS45 DME)
+- **Runs on macOS and Linux.** WPF → Avalonia; .NET Framework 4.5.2 → .NET 8.
+  `kernel32!SetThreadExecutionState` (keep-awake) → `caffeinate` on macOS.
+- **No Windows install assumptions.** Serial ports are `/dev/cu.usbserial-*`
+  device paths, not `COM1`. Settings live in a JSON file under the user config
+  dir instead of an `.exe.config`. EDIABAS's Windows-1252 dependency is handled
+  by registering `CodePagesEncodingProvider` at startup (it is not built into
+  .NET 8, which otherwise crashed every `new EdiabasNet()`).
+- **EWS delete** (MS45.1 program `0044570LO02S` only) — patches the immobilizer
+  check out of the program before a full-binary flash. Gated on the DME's own
+  program reference, read over the wire via `ZIF_LESEN` ($22 $2503), so it will
+  not enable on a car running a different program.
+- **Fault Codes tab** — read / clear / export CSV, with a per-fault detail
+  window, for either the **DME** (`ms450ds0.prg`, with SAE P-codes) or the
+  **TCU** (`gs20.prg`).
 
+---
 
+## Prerequisites
 
-##### Identify your DME
-Start the application, connect your interface to your OBDII port, and click "Ident DME"
-If successful, the application should autopopulate some information from your DME
+- **.NET 8 SDK** (or newer with roll-forward). Verified on .NET 10 SDK / macOS
+  arm64.
+- An **INPA-compatible OBDII cable** (K+DCAN / FTDI). Set the cable latency to
+  1 ms.
+- The EDIABAS SGBD files for your car. The app needs at minimum `ms450ds0.prg`
+  (or `10MDS45.prg`) for the DME and, for transmission faults, `gs20.prg` — plus
+  whatever group files they reference. Point the app's ECU path at the folder
+  that holds them.
 
-##### Reading your DME
-For the tune, simply click "Read DME". 
+`EdiabasLib` is vendored as a git submodule and built from source; you do **not**
+need a prebuilt `EdiabasLib.dll`.
 
-If you would like to backup your full flash, check the "full binary" checkbox before clicking "Read DME"
-A full backup will result in two files. The _Flash file is the external flash of your DME, and the _mpc file contains the data that's internal to the CPU. You need both of these
+## Building
 
-Save the file(s) whereever you like
+```sh
+git clone --recurse-submodules https://github.com/dader34/MS45-Flasher.git
+cd MS45-Flasher
+./build/setup.sh                       # pulls the submodule + adds its net8.0 target
+dotnet build -c Release src/Ms45Flasher
+dotnet run  -c Release --project src/Ms45Flasher
+```
 
-##### Flashing your DME
-It is *highly recommended* you make a full backup before you flash your DME
+`build/setup.sh` is idempotent. It applies `build/ediabaslib-net8.patch`, which
+adds a plain `net8.0` target framework to the EdiabasLib submodule (upstream
+targets only `net*-windows` and `net481`). Nothing in the OBD serial path is
+Windows-specific — `EdInterfaceObd` drives `System.IO.Ports.SerialPort`, which
+is cross-platform on .NET 8+.
 
-To flash a tune: 
-* Click "Load File"
-* Open the tune you'd like to flash
-* Click "Flash Tune". 
+To run the tests (the EWS-delete patch has a full test suite):
 
-If successful, your DME should reboot and the application status should reflect "Flash Successful"
+```sh
+dotnet test tests/Ms45Flasher.Tests
+```
 
-To flash a full binary: 
-* Check the "Full Binary" checkbox
-* Click "Load File" and open the file that contains the external flash you'd like to use
-* Click "Load File 2 (MPC)" and open the file that contains the mpc flash you'd like to use
-* Click "Flash Program"
-* **NOTE**: If the files do not match, you can render your DME unbootable. The application does do some basic checking, but it may not be fool proof
+The fixture tests that verify the EWS patch against real images are skipped
+unless `MS45_STOCK_BIN` and `MS45_EWS_BIN` point at local copies.
 
-If the program version you flashed is different than what was on there before, you will also have to flash a tune. You can simply click "Flash Tune" to use the one embedded within the full file, or you can uncheck the checkbox and load an appropriate tune of your choice. 
+---
 
+## Usage
+
+Settings are stored automatically; set them from the UI.
+
+1. **Set Serial Port** — pick your cable (e.g. `/dev/cu.usbserial-XXXX`).
+2. **Load SGBD (.PRG)** — point at your ECU folder / `ms450ds0.prg` if it is not
+   already configured.
+3. **Identify DME** — connect the cable to the OBDII port with the ignition on,
+   then click. On success the DME information panel fills in, including the
+   program reference used to gate EWS delete.
+
+### Reading
+
+- **Tune only:** click **Read DME**.
+- **Full backup:** check **Full Binary** first. This produces two files — the
+  `_Flash` file (external flash) and the `_MPC` file (internal CPU flash). Keep
+  both.
+
+### Flashing
+
+Make a full backup first.
+
+**Tune** (parameter region only — recoverable, cannot brick the DME):
+- **Load File** → a tune-sized file (`0x1D000`) with Full Binary **unchecked**,
+  or a full binary with Full Binary **checked** (the tune slice is extracted for
+  you) → **Flash Tune**.
+
+**Full program** (external + MPC — this is the path that can brick the DME):
+- Check **Full Binary**, **Load File** (external), **Load File 2 (MPC)**,
+  optionally tick **EWS Delete**, then **Flash Program**.
+- If the files do not match you can render the DME unbootable, recoverable only
+  with a BDM tool. The app does basic checking but it is not foolproof.
+
+### Fault codes
+
+On the **Fault Codes** tab, choose the **Module** (DME or TCU), then **Read
+Fault Codes**. Double-click a fault for the full detail (location, symptom,
+P-code text where available). **Export CSV** writes every field. **Clear Fault
+Codes** erases the selected module's memory; faults for problems still present
+return on the next drive cycle.
+
+---
+
+## Status
+
+Verified on a real E46 (325i, MS45.1 + GS20):
+
+- Tune flash — write then read-back is byte-identical to the flashed file.
+- DME + TCU fault read / clear / export.
+- Serial + security-access + memory read/write over a macOS FTDI cable.
+
+Not yet exercised on a car through this port: the **full-program / EWS flash**
+path (the brick-capable one). Treat it as unproven and keep a full backup.
+
+Note: the transmission uses `gs20.prg` directly rather than the `D_EGS.grp`
+group file, because the group file's multi-module probe aborts on the first
+non-responding candidate through this transport (an EDIABAS retry-timing gap,
+not a code bug). `gs20.prg` is the only automatic TCU the M54 E46 shipped.
+
+---
 
 ## Built using
 
-* [EdiabasLib](https://github.com/uholeschak/ediabaslib) - Used to communicate with the DME
+* [EdiabasLib](https://github.com/uholeschak/ediabaslib) — communicates with the ECUs
+* [Avalonia](https://avaloniaui.net) — cross-platform UI
 
 ## Acknowledgments
 
-* Hassmaschine has been a tremendous help in disassembling the DME and understanding the how the code generally works. I likely never would have done much with the MS45 without his help
-* See also the list of [contributors](https://github.com/terraphantm/MS45-Flasher/contributors) who participated / will participate in this project.
-
-
-If this application has been useful for you and you would like to go a bit further with tuning, please consider checking out [bimmerlabs](https://www.bimmerlabs.com). The site is still growing, but our goal is to allow full control of most BMW DMEs. 
+Upstream MS45-Flasher by [terraphantm](https://github.com/terraphantm/MS45-Flasher),
+with disassembly help credited there to Hassmaschine. This fork only ports and
+extends that work.
 
 ## License
 
-This project is licensed under The GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details
+GNU General Public License v3.0 — see [LICENSE](LICENSE).
 
-## Disclaimer: 
-This program is inherently invasive, and can render your DME unbootable and your car undriveable. Care must be taken when using this application. In no respect shall the authors or contributors incur any liability for any damages, including, but limited to, direct, indirect, special, or consequential damages arising out of, resulting from, or any way connected to the use of the application, whether or not based upon warranty, contract, tort, or otherwise; whether or not injury was sustained by persons or property or otherwise; and whether or not loss was sustained from, or arose out of, the results of, the item, or any services that may be provided by the authors and contributors.
+## Disclaimer
+
+This program is inherently invasive and can render your DME unbootable and your
+car undriveable. Care must be taken when using it. In no respect shall the
+authors or contributors incur any liability for any damages arising out of,
+resulting from, or in any way connected to the use of the application. Use at
+your own risk, on a vehicle you own.
