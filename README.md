@@ -50,13 +50,9 @@ need a prebuilt `EdiabasLib.dll`.
 
 ## Building
 
-The GitHub repository is still named `MS45-Flasher`; rename it in the repo
-settings if you want the URL to match the app. The clone commands below use the
-current name.
-
 ```sh
-git clone --recurse-submodules https://github.com/dader34/MS45-Flasher.git
-cd MS45-Flasher
+git clone --recurse-submodules https://github.com/dader34/BMWeb-Flasher.git
+cd BMWeb-Flasher
 ./build/setup.sh                       # pulls the submodule + adds its net8.0 target
 dotnet build -c Release src/BmwebFlasher
 dotnet run  -c Release --project src/BmwebFlasher
