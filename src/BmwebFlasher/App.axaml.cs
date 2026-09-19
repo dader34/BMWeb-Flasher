@@ -2,7 +2,7 @@ using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 
-namespace MS45_Flasher;
+namespace BmwebFlasher;
 
 public partial class App : Application
 {

@@ -6,8 +6,8 @@
     <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
-    <RootNamespace>MS45_Flasher</RootNamespace>
-    <AssemblyName>Ms45Flasher</AssemblyName>
+    <RootNamespace>BmwebFlasher</RootNamespace>
+    <AssemblyName>BmwebFlasher</AssemblyName>
     <!-- EdiabasLib's multi-targeting evaluates Windows TFMs during restore even
          when we only build net8.0, so the SDK needs this to resolve them. -->
     <EnableWindowsTargeting>true</EnableWindowsTargeting>

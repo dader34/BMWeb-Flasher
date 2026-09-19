@@ -7,7 +7,7 @@ using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 
-namespace MS45_Flasher
+namespace BmwebFlasher
 {
     /// <summary>
     /// First-boot setup. Lets the user download the SGBD data, point at an

@@ -11,7 +11,7 @@ using Avalonia.Platform.Storage;
 
 using EdiabasLib;
 
-namespace MS45_Flasher
+namespace BmwebFlasher
 {
     public partial class MainWindow : Window
     {

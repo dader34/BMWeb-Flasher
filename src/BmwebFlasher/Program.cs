@@ -2,7 +2,7 @@
 using System;
 using System.Text;
 
-namespace MS45_Flasher;
+namespace BmwebFlasher;
 
 class Program
 {

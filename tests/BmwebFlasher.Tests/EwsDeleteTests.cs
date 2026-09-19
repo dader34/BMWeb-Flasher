@@ -2,7 +2,7 @@ using System;
 using System.IO;
 using Xunit;
 
-namespace MS45_Flasher.Tests
+namespace BmwebFlasher.Tests
 {
     /// <summary>
     /// The ground truth for the EWS patch is a pair of real images: a stock

@@ -1,7 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:local="clr-namespace:MS45_Flasher"
-        x:Class="MS45_Flasher.MainWindow"
+        xmlns:local="clr-namespace:BmwebFlasher"
+        x:Class="BmwebFlasher.MainWindow"
         Width="640" Height="500" MinWidth="620" MinHeight="480"
         Title="BMWeb Flasher">
   <!-- The WPF original positioned every control with absolute Margins inside a
