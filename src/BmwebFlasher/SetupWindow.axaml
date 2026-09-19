@@ -1,6 +1,6 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        x:Class="MS45_Flasher.SetupWindow"
+        x:Class="BmwebFlasher.SetupWindow"
         Width="520" Height="340"
         CanResize="False"
         WindowStartupLocation="CenterScreen"

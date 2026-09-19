@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace MS45_Flasher
+namespace BmwebFlasher
 {
     /// <summary>
     /// EWS (immobilizer) delete patch for the MS45.1 external flash.

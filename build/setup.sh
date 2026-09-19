@@ -44,4 +44,4 @@ print("patched", p)
 PY
 fi
 
-echo "Setup complete. Build with:  dotnet build -c Release src/Ms45Flasher"
+echo "Setup complete. Build with:  dotnet build -c Release src/BmwebFlasher"

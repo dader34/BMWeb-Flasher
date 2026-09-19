@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 using System.Numerics;
 using System.Security.Cryptography;
 
-namespace MS45_Flasher
+namespace BmwebFlasher
 {
     class Checksums_Signatures
     {

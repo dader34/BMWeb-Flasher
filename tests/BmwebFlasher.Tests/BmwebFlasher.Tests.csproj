@@ -4,7 +4,7 @@
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>disable</Nullable>
     <IsPackable>false</IsPackable>
-    <RootNamespace>MS45_Flasher.Tests</RootNamespace>
+    <RootNamespace>BmwebFlasher.Tests</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>
@@ -17,7 +17,7 @@
   <ItemGroup>
     <!-- Link the patch logic directly rather than referencing the Avalonia app,
          so the tests stay headless and do not drag in a UI toolkit. -->
-    <Compile Include="..\..\src\Ms45Flasher\EwsDelete.cs" Link="EwsDelete.cs" />
+    <Compile Include="..\..\src\BmwebFlasher\EwsDelete.cs" Link="EwsDelete.cs" />
   </ItemGroup>
 
 </Project>

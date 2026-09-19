@@ -50,12 +50,16 @@ need a prebuilt `EdiabasLib.dll`.
 
 ## Building
 
+The GitHub repository is still named `MS45-Flasher`; rename it in the repo
+settings if you want the URL to match the app. The clone commands below use the
+current name.
+
 ```sh
 git clone --recurse-submodules https://github.com/dader34/MS45-Flasher.git
 cd MS45-Flasher
 ./build/setup.sh                       # pulls the submodule + adds its net8.0 target
-dotnet build -c Release src/Ms45Flasher
-dotnet run  -c Release --project src/Ms45Flasher
+dotnet build -c Release src/BmwebFlasher
+dotnet run  -c Release --project src/BmwebFlasher
 ```
 
 `build/setup.sh` is idempotent. It applies `build/ediabaslib-net8.patch`, which
@@ -67,7 +71,7 @@ is cross-platform on .NET 8+.
 To run the tests (the EWS-delete patch has a full test suite):
 
 ```sh
-dotnet test tests/Ms45Flasher.Tests
+dotnet test tests/BmwebFlasher.Tests
 ```
 
 The fixture tests that verify the EWS patch against real images are skipped

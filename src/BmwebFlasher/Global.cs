@@ -5,7 +5,7 @@ using System.Linq;
 using System.Reflection;
 using System.Text.Json;
 
-namespace MS45_Flasher
+namespace BmwebFlasher
 {
     /// <summary>
     /// Replaces the original App.config/ConfigurationManager settings, which were
@@ -143,6 +143,12 @@ namespace MS45_Flasher
 
         private static readonly string ConfigPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "bmweb-flasher", "settings.json");
+
+        // The app used to store settings under "ms45flasher"; migrate that file
+        // once so an existing install keeps its port / ECU path after the rename.
+        private static readonly string LegacyConfigPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "ms45flasher", "settings.json");
 
         public static Settings Settings { get; private set; } = Load();
@@ -171,6 +177,15 @@ namespace MS45_Flasher
             {
                 if (File.Exists(ConfigPath))
                     return JsonSerializer.Deserialize<Settings>(File.ReadAllText(ConfigPath)) ?? new Settings();
+
+                // One-time migration from the pre-rename location.
+                if (File.Exists(LegacyConfigPath))
+                {
+                    var s = JsonSerializer.Deserialize<Settings>(File.ReadAllText(LegacyConfigPath)) ?? new Settings();
+                    Settings = s;
+                    Save(); // writes to the new ConfigPath
+                    return s;
+                }
             }
             catch (Exception ex)
             {
