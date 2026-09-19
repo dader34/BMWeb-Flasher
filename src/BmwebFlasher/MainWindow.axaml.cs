@@ -1446,6 +1446,12 @@ namespace BmwebFlasher
             bool success = true;
             bool fullBin = FullBin_CheckBox.IsChecked == true;
 
+            using (FlashLog.Session("flash-tune", out string logPath))
+            {
+            FlashLog.Note("DME " + Global.HW_Ref + " / prog " + Global.Prog_Ref +
+                          " / diag " + Global.diagProtocol);
+            if (logPath != null) SetStatus("Logging to " + Path.GetFileName(logPath));
+
             using (EdiabasNet ediabas = StartEdiabas())
             {
                 await Task.Run(() =>
@@ -1498,12 +1504,20 @@ namespace BmwebFlasher
             // been disposed by the using block above; preflight is skipped so a
             // still-releasing port node cannot report a false "Port unavailable".
             await Task.Run(() => IdentDME(preflightPort: false));
+            } // FlashLog session
         }
 
         private async Task Flashfull()
         {
             Checksums_Signatures ChecksumsSignatures = new Checksums_Signatures();
             bool success = true;
+
+            using (FlashLog.Session("flash-program", out string logPath))
+            {
+            FlashLog.Note("DME " + Global.HW_Ref + " / prog " + Global.Prog_Ref +
+                          " / diag " + Global.diagProtocol +
+                          " / EWS delete " + (EwsDelete_CheckBox.IsChecked == true));
+            if (logPath != null) SetStatus("Logging to " + Path.GetFileName(logPath));
 
             using (EdiabasNet ediabas = StartEdiabas())
             {
@@ -1532,6 +1546,7 @@ namespace BmwebFlasher
                     if (!ExecuteJob(ediabas, "normaler_datenverkehr", "ja;nein;nein")) return;
                 }
 
+                FlashLog.Note("PHASE: erase program region 0x2060000 block 0xA0000");
                 SetStatus("Erasing Flash");
                 await Task.Run(() => success = EraseECU(ediabas, eraseBlock, eraseStart));
                 if (!success) return;
@@ -1557,6 +1572,7 @@ namespace BmwebFlasher
                 byte[] toFlash = ChecksumsSignatures.CorrectProgramChecksums(source, Global.openedMPC);
                 toFlash = ChecksumsSignatures.SignMS45Program(toFlash, Global.openedMPC).Skip(0x60000).Take(0x9FF40).ToArray();
 
+                FlashLog.Note("PHASE: write external program 0x2060000..0x20FFF3F");
                 SetStatus("Flashing External Program");
                 await Task.Run(() => success = FlashBlock(ediabas, toFlash, flashStart, flashEnd));
 
@@ -1569,6 +1585,7 @@ namespace BmwebFlasher
                 }
                 else
                 {
+                    FlashLog.Note("PHASE: write internal MPC 0x0..0x6FFFF (brick-capable step)");
                     SetStatus("Flashing Internal Program");
                     await Task.Run(() => success = FlashBlock(ediabas, Global.openedMPC, flashMPCStart, flashMPCEnd));
 
@@ -1582,6 +1599,7 @@ namespace BmwebFlasher
 
             // Re-identify after the port is released; see FlashDME_Data.
             await Task.Run(() => IdentDME(preflightPort: false));
+            } // FlashLog session
         }
 
         /// <summary>
@@ -1845,9 +1863,12 @@ namespace BmwebFlasher
             {
                 if (ediabas.ErrorCodeLast == EdiabasNet.ErrorCodes.EDIABAS_ERR_NONE)
                     System.Diagnostics.Debug.WriteLine("Job execution failed: " + EdiabasNet.GetExceptionText(ex));
+                FlashLog.Job(Job, Arg, "EXCEPTION: " + ex.Message, null, null);
                 return false;
             }
-            return (GetResult_String("JOB_STATUS", ediabas.ResultSets) == "OKAY");
+            string status = GetResult_String("JOB_STATUS", ediabas.ResultSets);
+            LogJobTelegrams(Job, Arg, status, ediabas);
+            return status == "OKAY";
         }
 
         private static bool ExecuteJob(EdiabasNet ediabas, string Job, byte[] Arg)
@@ -1861,9 +1882,33 @@ namespace BmwebFlasher
             {
                 if (ediabas.ErrorCodeLast == EdiabasNet.ErrorCodes.EDIABAS_ERR_NONE)
                     System.Diagnostics.Debug.WriteLine("Job execution failed: " + EdiabasNet.GetExceptionText(ex));
+                FlashLog.Job(Job, BinArg(Arg), "EXCEPTION: " + ex.Message, Arg, null);
                 return false;
             }
-            return (GetResult_String("JOB_STATUS", ediabas.ResultSets) == "OKAY");
+            string status = GetResult_String("JOB_STATUS", ediabas.ResultSets);
+            LogJobTelegrams(Job, BinArg(Arg), status, ediabas);
+            return status == "OKAY";
+        }
+
+        /// <summary>Records a job and its wire telegrams to the flash log (no-op when not logging).</summary>
+        private static void LogJobTelegrams(string job, string argSummary, string status, EdiabasNet ediabas)
+        {
+            if (!FlashLog.IsActive) return;
+            byte[] tx = GetResult_ByteArray("_TEL_AUFTRAG", ediabas.ResultSets);
+            byte[] rx = GetResult_ByteArray("_TEL_ANTWORT", ediabas.ResultSets);
+            FlashLog.Job(job, argSummary, status, tx, rx);
+        }
+
+        /// <summary>Short summary of a binary argument (length + first bytes), for the log.</summary>
+        private static string BinArg(byte[] arg)
+        {
+            if (arg == null || arg.Length == 0) return string.Empty;
+            int n = Math.Min(arg.Length, 8);
+            var sb = new System.Text.StringBuilder();
+            sb.Append(arg.Length).Append("B:");
+            for (int i = 0; i < n; i++) sb.Append(' ').Append(arg[i].ToString("X2"));
+            if (arg.Length > n) sb.Append(" ...");
+            return sb.ToString();
         }
     }
 }
