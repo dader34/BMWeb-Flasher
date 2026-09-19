@@ -4,7 +4,7 @@ using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace MS45_Flasher
+namespace BmwebFlasher
 {
     /// <summary>
     /// First-run helper that fetches the EDIABAS SGBD data the app needs
