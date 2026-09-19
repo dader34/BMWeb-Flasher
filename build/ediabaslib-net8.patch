@@ -1,0 +1,25 @@
+Add a plain net8.0 target framework to EdiabasLib so it builds on macOS/Linux.
+
+Upstream targets only net*-windows and net481. Nothing in the OBD serial path
+actually needs Windows: EdInterfaceObd drives System.IO.Ports.SerialPort, which
+is cross-platform on .NET 8+. The Windows-only surface is confined to
+Ftd2xx.cs (P/Invoke into the native ftd2xx library, which also ships for macOS)
+and Bluetooth, neither of which is on the K+DCAN cable path this app uses.
+
+Assembly signing is disabled because EdiabasLib.snk is not needed for a local
+reference build and strong-name signing adds nothing here.
+
+--- a/EdiabasLib/EdiabasLib/EdiabasLib.csproj
++++ b/EdiabasLib/EdiabasLib/EdiabasLib.csproj
+@@
+-    <TargetFrameworks>net10.0-windows10.0.26100.0;net8.0-windows10.0.26100.0;net481;$(_AndroidTargets)</TargetFrameworks>
++    <TargetFrameworks>net10.0-windows10.0.26100.0;net8.0-windows10.0.26100.0;net481;net8.0;$(_AndroidTargets)</TargetFrameworks>
+@@
+-    <SignAssembly>true</SignAssembly>
++    <SignAssembly Condition="'$(TargetFramework)' != 'net8.0'">true</SignAssembly>
+@@
+-  <ItemGroup Condition="$(TargetFramework.Contains('windows'))">
++  <ItemGroup Condition="$(TargetFramework.Contains('windows')) or '$(TargetFramework)' == 'net8.0'">
+       <PackageReference Include="InTheHand.BluetoothLE" Version="4.0.45" GeneratePathProperty="true" />
+       <PackageReference Include="System.IO.Ports" Version="10.0.12" GeneratePathProperty="true" />
+   </ItemGroup>

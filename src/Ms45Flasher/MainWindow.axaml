@@ -1,0 +1,107 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:MS45_Flasher"
+        x:Class="MS45_Flasher.MainWindow"
+        Width="640" Height="500" MinWidth="620" MinHeight="480"
+        Title="BMWeb Flasher">
+  <!-- The WPF original positioned every control with absolute Margins inside a
+       Grid. That does not survive a different text renderer, so the port uses
+       real layout containers instead. The two tabs share the status bar and
+       progress bar at the bottom. -->
+  <Grid Margin="0" RowDefinitions="*,Auto,Auto">
+
+    <TabControl Grid.Row="0" Margin="12,8,12,0">
+
+      <!-- ============ Flashing ============ -->
+      <TabItem Header="Flashing">
+        <Grid Margin="8" RowDefinitions="Auto,*" ColumnDefinitions="*,Auto">
+          <TextBlock Grid.Row="0" Grid.Column="0" Text="DME Information:" Margin="0,0,0,8"/>
+
+          <Grid Grid.Row="1" Grid.Column="0"
+                ColumnDefinitions="130,*" VerticalAlignment="Top"
+                RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto">
+            <TextBlock Grid.Row="0" Grid.Column="0" Text="DME Type" Margin="0,3"/>
+            <TextBlock Grid.Row="1" Grid.Column="0" Text="HW Reference" Margin="0,3"/>
+            <TextBlock Grid.Row="2" Grid.Column="0" Text="SW Reference" Margin="0,3"/>
+            <TextBlock Grid.Row="3" Grid.Column="0" Text="Program Status" Margin="0,3"/>
+            <TextBlock Grid.Row="4" Grid.Column="0" Text="VIN" Margin="0,3"/>
+            <TextBlock Grid.Row="5" Grid.Column="0" Text="Program Ref." Margin="0,3"/>
+            <TextBlock Grid.Row="6" Grid.Column="0" Text="Diag. Protocol" Margin="0,3"/>
+
+            <TextBlock x:Name="DMEType_Box"       Grid.Row="0" Grid.Column="1" Margin="0,3"/>
+            <TextBlock x:Name="HWRef_Box"         Grid.Row="1" Grid.Column="1" Margin="0,3"/>
+            <TextBlock x:Name="SWRef_Box"         Grid.Row="2" Grid.Column="1" Margin="0,3"/>
+            <TextBlock x:Name="programStatus_Box" Grid.Row="3" Grid.Column="1" Margin="0,3"/>
+            <TextBlock x:Name="VIN_Box"           Grid.Row="4" Grid.Column="1" Margin="0,3"/>
+            <TextBlock x:Name="progRef_Box"       Grid.Row="5" Grid.Column="1" Margin="0,3"/>
+            <TextBlock x:Name="diagProtocol_Box"  Grid.Row="6" Grid.Column="1" Margin="0,3"/>
+          </Grid>
+
+          <!-- Scrolls if the window is ever shorter than the button stack, so
+               the last controls (Full Binary / EWS Delete) can't be clipped. -->
+          <ScrollViewer Grid.Row="0" Grid.RowSpan="2" Grid.Column="1"
+                        VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel Width="210" Spacing="4" HorizontalAlignment="Right">
+              <Button x:Name="SetPort"      Content="Set Serial Port"        HorizontalAlignment="Stretch" Click="SetPort_Click"/>
+              <Button x:Name="IdentifyDME"  Content="Identify DME"           HorizontalAlignment="Stretch" Click="IdentifyDME_Click"/>
+              <Button x:Name="LoadSGBD"     Content="Load SGBD (.PRG)"       HorizontalAlignment="Stretch" Click="LoadSGBD_Click"/>
+              <Button x:Name="ReadTune"     Content="Read DME"               HorizontalAlignment="Stretch" Click="ReadTune_Click"     IsEnabled="False"/>
+              <Button x:Name="LoadFile"     Content="Load File"              HorizontalAlignment="Stretch" Click="LoadFile_Click"     IsEnabled="False"/>
+              <Button x:Name="LoadFile2"    Content="Load File 2 (MPC Flash)" HorizontalAlignment="Stretch" Click="LoadFile2_Click"    IsEnabled="False"/>
+              <Button x:Name="FlashProgram" Content="Flash Program"          HorizontalAlignment="Stretch" Click="FlashProgram_Click" IsEnabled="False"/>
+              <Button x:Name="FlashDME"     Content="Flash Tune"             HorizontalAlignment="Stretch" Click="FlashData_Click"    IsEnabled="False"/>
+              <CheckBox x:Name="FullBin_CheckBox" Content="Full Binary" IsEnabled="False" Click="FullBin_CheckBox_Changed"/>
+              <!-- Only meaningful for a full-binary program flash: the patch sites live
+                   in the program area, not the tune/parameter area. -->
+              <CheckBox x:Name="EwsDelete_CheckBox" Content="EWS Delete" IsEnabled="False"
+                        Click="EwsDelete_CheckBox_Changed"
+                        ToolTip.Tip="Patch the immobilizer check out of the program before flashing. MS45.1 only."/>
+            </StackPanel>
+          </ScrollViewer>
+        </Grid>
+      </TabItem>
+
+      <!-- ============ Fault Codes ============ -->
+      <!-- Disabled until the DME is identified, since every action here needs a
+           resolved SGBD and a live connection. -->
+      <TabItem x:Name="FaultsTab" Header="Fault Codes" IsEnabled="False">
+        <Grid Margin="8" RowDefinitions="Auto,*">
+          <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
+            <TextBlock Text="Module:" VerticalAlignment="Center"/>
+            <ComboBox x:Name="ModuleSelect" Width="150"
+                      SelectionChanged="ModuleSelect_Changed">
+              <ComboBoxItem Content="DME (engine)"/>
+              <ComboBoxItem Content="TCU (transmission)"/>
+            </ComboBox>
+            <Button x:Name="ReadFaults"   Content="Read Fault Codes"  Click="ReadFaults_Click"/>
+            <Button x:Name="ClearFaults"  Content="Clear Fault Codes" Click="ClearFaults_Click"/>
+            <Button x:Name="ExportFaults" Content="Export CSV"        Click="ExportFaults_Click" IsEnabled="False"/>
+            <TextBlock x:Name="faultCount_Box" VerticalAlignment="Center" Margin="8,0,0,0"/>
+          </StackPanel>
+
+          <DataGrid x:Name="FaultGrid" Grid.Row="1"
+                    x:DataType="local:MainWindow+FaultRow"
+                    IsReadOnly="True" GridLinesVisibility="Horizontal"
+                    HeadersVisibility="Column" CanUserResizeColumns="True"
+                    DoubleTapped="FaultGrid_DoubleTapped">
+            <DataGrid.Columns>
+              <DataGridTextColumn Header="Code"   Binding="{Binding Code}"  Width="*"/>
+              <DataGridTextColumn Header="P-Code" Binding="{Binding PCode}" Width="*"/>
+            </DataGrid.Columns>
+          </DataGrid>
+
+          <TextBlock Grid.Row="1" VerticalAlignment="Bottom" HorizontalAlignment="Center"
+                     Margin="0,0,0,6" Opacity="0.6" FontSize="12"
+                     Text="Double-click a fault for full details"/>
+        </Grid>
+      </TabItem>
+
+    </TabControl>
+
+    <TextBlock x:Name="statusTextBlock" Grid.Row="1"
+               Margin="20,10,20,6" TextWrapping="Wrap"/>
+
+    <ProgressBar x:Name="ProgressDME" Grid.Row="2"
+                 Margin="20,0,20,16" Minimum="0" Maximum="100" Value="0" Height="24"/>
+  </Grid>
+</Window>
