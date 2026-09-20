@@ -155,6 +155,8 @@ return on the next drive cycle.
 Verified on a real E46 (325i, MS45.1 + GS20):
 
 - Tune flash: write then read-back is byte-identical to the flashed file.
+- TCU calibration flash: erase, write and commit over raw DS2, with the
+  read-back byte-identical to the written calibration.
 - DME + TCU fault read / clear / export.
 - Serial + security-access + memory read/write over a macOS FTDI cable.
 
