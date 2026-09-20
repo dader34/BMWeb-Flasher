@@ -15,7 +15,7 @@
       <!-- ============ Flashing ============ -->
       <TabItem Header="Flashing">
         <Grid Margin="8" RowDefinitions="Auto,*" ColumnDefinitions="*,Auto">
-          <TextBlock Grid.Row="0" Grid.Column="0" Text="DME Information:" Margin="0,0,0,8"/>
+          <TextBlock x:Name="ModuleInfoHeader" Grid.Row="0" Grid.Column="0" Text="Select a control unit above." Margin="0,0,0,8"/>
 
           <Grid Grid.Row="1" Grid.Column="0"
                 ColumnDefinitions="130,*" VerticalAlignment="Top"
@@ -42,20 +42,50 @@
           <ScrollViewer Grid.Row="0" Grid.RowSpan="2" Grid.Column="1"
                         VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
             <StackPanel Width="210" Spacing="4" HorizontalAlignment="Right">
+              <!-- Choose the module first; the DME and TCU controls are shown
+                   exclusively so their buttons can never be confused. -->
+              <ComboBox x:Name="FlashModuleSelect" HorizontalAlignment="Stretch"
+                        PlaceholderText="Select control unit..."
+                        SelectionChanged="FlashModuleSelect_Changed">
+                <ComboBoxItem Content="DME (engine)"/>
+                <ComboBoxItem Content="TCU (transmission)"/>
+              </ComboBox>
               <Button x:Name="SetPort"      Content="Set Serial Port"        HorizontalAlignment="Stretch" Click="SetPort_Click"/>
-              <Button x:Name="IdentifyDME"  Content="Identify DME"           HorizontalAlignment="Stretch" Click="IdentifyDME_Click"/>
+              <Button x:Name="IdentifyDME"  Content="Identify"               HorizontalAlignment="Stretch" Click="IdentifyDME_Click" IsEnabled="False"/>
               <Button x:Name="LoadSGBD"     Content="Load SGBD (.PRG)"       HorizontalAlignment="Stretch" Click="LoadSGBD_Click"/>
-              <Button x:Name="ReadTune"     Content="Read DME"               HorizontalAlignment="Stretch" Click="ReadTune_Click"     IsEnabled="False"/>
-              <Button x:Name="LoadFile"     Content="Load File"              HorizontalAlignment="Stretch" Click="LoadFile_Click"     IsEnabled="False"/>
-              <Button x:Name="LoadFile2"    Content="Load File 2 (MPC Flash)" HorizontalAlignment="Stretch" Click="LoadFile2_Click"    IsEnabled="False"/>
-              <Button x:Name="FlashProgram" Content="Flash Program"          HorizontalAlignment="Stretch" Click="FlashProgram_Click" IsEnabled="False"/>
-              <Button x:Name="FlashDME"     Content="Flash Tune"             HorizontalAlignment="Stretch" Click="FlashData_Click"    IsEnabled="False"/>
-              <CheckBox x:Name="FullBin_CheckBox" Content="Full Binary" IsEnabled="False" Click="FullBin_CheckBox_Changed"/>
-              <!-- Only meaningful for a full-binary program flash: the patch sites live
-                   in the program area, not the tune/parameter area. -->
-              <CheckBox x:Name="EwsDelete_CheckBox" Content="EWS Delete" IsEnabled="False"
-                        Click="EwsDelete_CheckBox_Changed"
-                        ToolTip.Tip="Patch the immobilizer check out of the program before flashing. MS45.1 only."/>
+
+              <!-- DME controls -->
+              <StackPanel x:Name="DmePanel" Spacing="4">
+                <Button x:Name="ReadTune"     Content="Read DME"               HorizontalAlignment="Stretch" Click="ReadTune_Click"     IsEnabled="False"/>
+                <Button x:Name="LoadFile"     Content="Load File"              HorizontalAlignment="Stretch" Click="LoadFile_Click"     IsEnabled="False"/>
+                <Button x:Name="LoadFile2"    Content="Load File 2 (MPC Flash)" HorizontalAlignment="Stretch" Click="LoadFile2_Click"    IsEnabled="False"/>
+                <Button x:Name="FlashProgram" Content="Flash Program"          HorizontalAlignment="Stretch" Click="FlashProgram_Click" IsEnabled="False"/>
+                <Button x:Name="FlashDME"     Content="Flash Tune"             HorizontalAlignment="Stretch" Click="FlashData_Click"    IsEnabled="False"/>
+                <CheckBox x:Name="FullBin_CheckBox" Content="Full Binary" IsEnabled="False" Click="FullBin_CheckBox_Changed"/>
+                <!-- Only meaningful for a full-binary program flash: the patch sites live
+                     in the program area, not the tune/parameter area. -->
+                <CheckBox x:Name="EwsDelete_CheckBox" Content="EWS Delete" IsEnabled="False"
+                          Click="EwsDelete_CheckBox_Changed"
+                          ToolTip.Tip="Patch the immobilizer check out of the program before flashing. MS45.1 only."/>
+              </StackPanel>
+
+              <!-- TCU controls. The GS20 SGBD has no flash jobs, so this is
+                   read-only: a calibration dump for backup/inspection. -->
+              <StackPanel x:Name="TcuPanel" Spacing="4" IsVisible="False">
+                <Button x:Name="ReadTcuCal" Content="Read Calibration" HorizontalAlignment="Stretch"
+                        Click="ReadTcuCal_Click" IsEnabled="False"
+                        ToolTip.Tip="Dump the transmission calibration (0x090000, 64 KB) to a file."/>
+                <Button x:Name="LoadTcuCal" Content="Load Calibration File" HorizontalAlignment="Stretch"
+                        Click="LoadTcuCal_Click" IsEnabled="False"
+                        ToolTip.Tip="Pick a 64 KB GS20 calibration to write. Its checksum is corrected automatically."/>
+                <Button x:Name="WriteTcuCal" Content="Write Calibration" HorizontalAlignment="Stretch"
+                        Click="WriteTcuCal_Click" IsEnabled="False"
+                        ToolTip.Tip="Erase and reprogram the transmission calibration over raw DS2."/>
+                <CheckBox x:Name="TcuFastMode" Content="Fast mode" IsChecked="True"
+                          ToolTip.Tip="Ask the transmission to talk at 125000 baud instead of 9600. Falls back on its own if the transmission will not."/>
+                <TextBlock Text="Take a backup read first and keep the engine off with a charger on."
+                           Opacity="0.6" FontSize="12" TextWrapping="Wrap"/>
+              </StackPanel>
             </StackPanel>
           </ScrollViewer>
         </Grid>

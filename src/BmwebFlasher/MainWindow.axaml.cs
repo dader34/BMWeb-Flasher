@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using System.IO;
+using System.Text;
 
 using Avalonia.Controls;
 using Avalonia.Interactivity;
@@ -19,7 +20,10 @@ namespace BmwebFlasher
         {
             InitializeComponent();
             Title = Global.Title;
-            ModuleSelect.SelectedIndex = 0; // DME by default
+            ModuleSelect.SelectedIndex = 0; // fault-codes module, DME by default
+            // The flashing module starts UNSELECTED: the user must choose DME or
+            // TCU before any control unit's buttons appear. This keeps the two
+            // modules' actions from ever being confused.
 
             // Auto-detect the cable if none is saved yet.
             if (string.IsNullOrEmpty(Global.Port))
@@ -82,6 +86,16 @@ namespace BmwebFlasher
                                      DispatcherPriority.Background);
 
         /// <summary>
+        /// Colours the progress bar red while something is being written to a
+        /// module, so a flash in progress is never mistaken for a read.
+        /// </summary>
+        private void ShowProgressAsFlashing(bool flashing) =>
+            Dispatcher.UIThread.Post(() =>
+                ProgressDME.Foreground = flashing
+                    ? new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.FromRgb(0xC0, 0x39, 0x2B))
+                    : null);
+
+        /// <summary>
         /// Replaces WPF MessageBox.Show(..., YesNo), which has no Avalonia
         /// equivalent. Returns true for "yes". Defaults to No, matching the
         /// original's MessageBoxResult.No default - these prompts all guard
@@ -117,6 +131,61 @@ namespace BmwebFlasher
                         HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
                         Spacing = 8,
                         Children = { no, yes }
+                    }
+                }
+            };
+
+            await dialog.ShowDialog(this);
+            return result;
+        }
+
+        /// <summary>
+        /// A confirmation that will not proceed until the warning is ticked.
+        /// Used where the risk is real enough that clicking through on muscle
+        /// memory should not be possible.
+        /// </summary>
+        private async Task<bool> ConfirmWithAcknowledgementAsync(
+            string message, string acknowledgement, string title)
+        {
+            var dialog = new Window
+            {
+                Title = title,
+                Width = 480,
+                SizeToContent = SizeToContent.Height,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                CanResize = false
+            };
+
+            bool result = false;
+            var confirm = new Button { Content = "Confirm", MinWidth = 90, IsEnabled = false };
+            var cancel = new Button { Content = "Cancel", MinWidth = 90, IsDefault = true };
+            var acknowledged = new CheckBox
+            {
+                Content = new TextBlock
+                {
+                    Text = acknowledgement,
+                    TextWrapping = Avalonia.Media.TextWrapping.Wrap
+                }
+            };
+
+            acknowledged.IsCheckedChanged += (_, _) => confirm.IsEnabled = acknowledged.IsChecked == true;
+            confirm.Click += (_, _) => { result = true; dialog.Close(); };
+            cancel.Click += (_, _) => { result = false; dialog.Close(); };
+
+            dialog.Content = new StackPanel
+            {
+                Margin = new Avalonia.Thickness(20),
+                Spacing = 16,
+                Children =
+                {
+                    new TextBlock { Text = message, TextWrapping = Avalonia.Media.TextWrapping.Wrap },
+                    acknowledged,
+                    new StackPanel
+                    {
+                        Orientation = Avalonia.Layout.Orientation.Horizontal,
+                        HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
+                        Spacing = 8,
+                        Children = { cancel, confirm }
                     }
                 }
             };
@@ -229,6 +298,44 @@ namespace BmwebFlasher
             SetStatus(string.IsNullOrEmpty(Global.Port) ? "No serial port set" : "Port: " + Global.Port);
         }
 
+        // --- Flashing tab module selection (DME vs TCU) ---------------------
+
+        /// <summary>Which module the Flashing tab is acting on.</summary>
+        private bool _flashTcu = false;
+
+        private void FlashModuleSelect_Changed(object sender, Avalonia.Controls.SelectionChangedEventArgs e)
+        {
+            if (DmePanel == null || TcuPanel == null) return; // during init
+
+            int idx = FlashModuleSelect.SelectedIndex;
+            if (idx < 0)
+            {
+                // Nothing chosen yet: hide both control sets, prompt to choose.
+                DmePanel.IsVisible = false;
+                TcuPanel.IsVisible = false;
+                IdentifyDME.IsEnabled = false;
+                ModuleInfoHeader.Text = "Select a control unit above.";
+                return;
+            }
+
+            _flashTcu = idx == 1;
+            DmePanel.IsVisible = !_flashTcu;
+            TcuPanel.IsVisible = _flashTcu;
+            IdentifyDME.IsEnabled = true;
+            ModuleInfoHeader.Text = _flashTcu ? "TCU Information:" : "DME Information:";
+
+            // The identified state belongs to one module; clear it on a switch.
+            DMEType_Box.Text = HWRef_Box.Text = SWRef_Box.Text = programStatus_Box.Text =
+                VIN_Box.Text = progRef_Box.Text = diagProtocol_Box.Text = string.Empty;
+            ReadTcuCal.IsEnabled = false;
+            LoadTcuCal.IsEnabled = false;
+            WriteTcuCal.IsEnabled = false;
+            _tcuCalToWrite = null;
+            _tcuSgbd = null;
+            _tcuIdentSwNr = _tcuIdentBmwNr = null;
+            SetStatus("Module: " + (_flashTcu ? "TCU (transmission)" : "DME (engine)"));
+        }
+
         private async void IdentifyDME_Click(object sender, RoutedEventArgs e)
         {
             UpdateProgressBar(0);
@@ -238,12 +345,598 @@ namespace BmwebFlasher
             // made a failing identify look like the button did nothing at all.
             try
             {
-                await Task.Run(() => IdentDME());
+                if (_flashTcu)
+                    await Task.Run(() => IdentTcu());
+                else
+                    await Task.Run(() => IdentDME());
             }
             catch (Exception ex)
             {
                 SetStatus("Identify failed: " + ex.Message);
-                await MessageAsync(Describe(ex), "Identify DME");
+                await MessageAsync(Describe(ex), "Identify");
+            }
+        }
+
+        // --- TCU (transmission) -------------------------------------------------
+
+        /// <summary>The SGBD the TCU resolved to, used for the calibration read.</summary>
+        private string _tcuSgbd;
+
+        /// <summary>What the transmission reported at IDENT, for the write gate.</summary>
+        private string _tcuIdentSwNr;
+        private string _tcuIdentBmwNr;
+
+        /// <summary>
+        /// The E46 automatic-transmission SGBDs, from BMW's D_EGS group /
+        /// GD20+GD86xx DAT tables. These are the variants D_EGS.grp itself
+        /// dispatches to, so asking each one's IDENT is what the group would do
+        /// if it could select DS2: BMW's own variant list, not a hardcoded guess.
+        ///
+        /// The group cannot do it. Its concept selector reads 0 (unspecified)
+        /// and the selector-0 path probes only the CAN concepts
+        /// (BMW-FAST/KWP2000*/D-CAN), never DS2 (0x06), then raises (eerr).
+        /// Confirmed by tracing D_EGS IDENTIFIKATION on the car.
+        ///
+        /// GS20 (A5S390R, DS2) is first since it is the M54 six's box.
+        /// </summary>
+        private static readonly string[] TcuVariants =
+        {
+            "gs20.prg",     // A5S390R  (GM 5-spd, M52/M54) - DS2
+            "gs8600.prg",   // A5S325Z  (ZF 5-spd)
+            "GS8602.prg",
+            "GS8603.prg",
+            "gs8604.prg",
+        };
+
+        /// <summary>
+        /// Resolves the transmission ECU and reads its identity by asking each
+        /// of BMW's E46 auto-TCU variants in turn; the first whose own IDENT
+        /// answers wins.
+        ///
+        /// The D_EGS group file is deliberately not tried. Every E46 automatic
+        /// is DS2, and the group cannot reach a DS2 module through this
+        /// transport, so it failed on every car and only added a timeout to the
+        /// front of an identify.
+        /// </summary>
+        private void IdentTcu()
+        {
+            string portProblem = CheckPort(Global.Port);
+            if (portProblem != null)
+            {
+                SetStatus("Port unavailable");
+                Dispatcher.UIThread.Post(() => _ = MessageAsync(portProblem, "Identify"));
+                return;
+            }
+
+            SetStatus("Probing transmission variants...");
+            foreach (string variant in TcuVariants)
+            {
+                using EdiabasNet ediabas = StartEdiabasSgbd(variant);
+                if (ediabas != null && ExecuteJob(ediabas, "IDENT", string.Empty))
+                {
+                    _tcuSgbd = variant;
+                    ShowTcuIdent(ediabas, variant);
+                    return;
+                }
+            }
+
+            SetStatus("No response from the TCU");
+            Dispatcher.UIThread.Post(() => _ = MessageAsync(
+                "The transmission did not respond to any known E46 auto-TCU variant. " +
+                "Check ignition and the cable.",
+                "Identify TCU"));
+        }
+
+        // GS20 calibration region: 0x090000, 64 KB (from the TCU RE ground truth).
+        private const int TcuCalStart = 0x090000;
+        private const int TcuCalLength = 0x10000;
+
+        private async void ReadTcuCal_Click(object sender, RoutedEventArgs e)
+        {
+            string portProblem = CheckPort(Global.Port);
+            if (portProblem != null)
+            {
+                SetStatus("Port unavailable");
+                await MessageAsync(portProblem, "Read Calibration");
+                return;
+            }
+
+            if (string.IsNullOrEmpty(_tcuSgbd))
+            {
+                SetStatus("Identify the TCU first");
+                return;
+            }
+
+            ReadTcuCal.IsEnabled = false;
+            UpdateProgressBar(0);
+            try
+            {
+                _tcuFastMode = TcuFastMode.IsChecked == true;
+                byte[] cal = await Task.Run(ReadTcuCalibration);
+                UpdateProgressBar(0);
+                if (cal == null || cal.Length == 0)
+                {
+                    SetStatus("TCU read returned no data");
+                    return;
+                }
+                await SaveDumpAsync(cal, "TCU_cal_" + DateTime.Now.ToString("yyyyMMdd_HHmmss"));
+                SetStatus("Read TCU calibration (0x" + cal.Length.ToString("X") + " bytes)" +
+                          DescribeCalChecksum(cal));
+            }
+            catch (Exception ex)
+            {
+                UpdateProgressBar(0);
+                SetStatus("TCU read failed: " + ex.Message);
+                await MessageAsync(Describe(ex), "Read Calibration");
+            }
+            finally
+            {
+                ReadTcuCal.IsEnabled = true;
+            }
+        }
+
+        /// <summary>
+        /// Reads the transmission calibration via SPEICHER_LESEN (EPROM). The
+        /// GS20 requires an established session, so IDENT runs first; reads then
+        /// go in ~250-byte chunks (the job returns at most ~251 bytes).
+        /// Read-only -- there is no TCU flash through this SGBD.
+        /// </summary>
+        /// <summary>
+        /// Reads the transmission calibration.
+        ///
+        /// The GS20 is read over raw DS2 rather than through EDIABAS. The
+        /// SPEICHER_LESEN route appended each reply to a running buffer and
+        /// stepped on by however many bytes came back, so one short or repeated
+        /// reply shifted everything after it: dumps came back with their 16 KB
+        /// blocks out of order and a duplicate header at 0x4000, and could
+        /// reproduce an earlier dump exactly even after the calibration on the
+        /// module had changed. The raw reader places every chunk at the address
+        /// it asked for, and moves the line to a faster rate for the transfer.
+        ///
+        /// Other transmissions keep the EDIABAS path, since only the GS20's
+        /// region and framing are known.
+        /// </summary>
+        private byte[] ReadTcuCalibration()
+        {
+            bool isGs20 = string.Equals(_tcuSgbd, "gs20.prg", StringComparison.OrdinalIgnoreCase);
+            return isGs20 ? ReadGs20CalibrationRaw() : ReadTcuCalibrationViaEdiabas();
+        }
+
+        private byte[] ReadGs20CalibrationRaw()
+        {
+            using (SleepBlocker.Acquire())
+            using (var link = new Ds2SerialLink(Global.Port))
+            {
+                // A faster line rate is worth having but not worth failing over;
+                // the read is identical either way, just slower.
+                if (_tcuFastMode)
+                {
+                    // Quiet either way: the percentage is the progress report
+                    // while this runs, and the outcome is reported at the end.
+                    try { link.SwitchBaud(Ds2SerialLink.FastBaud); }
+                    catch (Exception) { }
+                }
+
+                try
+                {
+                    var progress = new Progress<int>(p =>
+                    {
+                        UpdateProgressBar((uint)p);
+                        SetStatus(p + "%");
+                    });
+                    return new Gs20CalReader(link).Read(progress);
+                }
+                finally
+                {
+                    // Leave the module where the rest of the app expects it.
+                    try { link.SwitchBaud(Ds2SerialLink.DefaultBaud); }
+                    catch (Exception) { }
+                }
+            }
+        }
+
+        private byte[] ReadTcuCalibrationViaEdiabas()
+        {
+            using (SleepBlocker.Acquire())
+            using (EdiabasNet ediabas = StartEdiabasSgbd(_tcuSgbd))
+            {
+                if (ediabas == null) return null;
+
+                // Establish the diagnostic session; SPEICHER_LESEN does not
+                // respond without it.
+                ExecuteJob(ediabas, "IDENT", string.Empty);
+
+                var dump = new byte[TcuCalLength];
+                int read = 0;
+                const int chunk = 250;
+
+                while (read < TcuCalLength)
+                {
+                    int n = Math.Min(chunk, TcuCalLength - read);
+                    if (!ExecuteJob(ediabas, "SPEICHER_LESEN",
+                                    "EPROM;" + (TcuCalStart + read) + ";" + n))
+                        return null;
+
+                    byte[] data = GetResult_ByteArray("DATEN", ediabas.ResultSets);
+                    if (data == null || data.Length == 0) return null;
+
+                    // Place the reply where it was asked for; appending is what
+                    // let a short reply shift the rest of the image.
+                    int usable = Math.Min(data.Length, n);
+                    Buffer.BlockCopy(data, 0, dump, read, usable);
+                    read += usable;
+                    UpdateProgressBar((uint)(read * 100L / TcuCalLength));
+                }
+                return dump;
+            }
+        }
+
+        /// <summary>The calibration picked for a write, already checksum-corrected.</summary>
+        private byte[] _tcuCalToWrite;
+
+        /// <summary>Whether the last write got as far as erasing.</summary>
+        private bool _tcuWriteErased;
+
+        /// <summary>
+        /// Whether to ask the transmission for a faster line rate. Read from the
+        /// checkbox on the UI thread before the work starts, since the transfers
+        /// themselves run elsewhere.
+        /// </summary>
+        private bool _tcuFastMode = true;
+
+        private async void LoadTcuCal_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+                {
+                    Title = "Load TCU Calibration",
+                    AllowMultiple = false,
+                    FileTypeFilter = BinaryFilters()
+                });
+
+                string path = files?.FirstOrDefault()?.TryGetLocalPath();
+                if (string.IsNullOrEmpty(path))
+                    return;
+
+                byte[] cal = File.ReadAllBytes(path);
+                if (cal.Length != Gs20Checksum.CalLength)
+                {
+                    _tcuCalToWrite = null;
+                    WriteTcuCal.IsEnabled = false;
+                    SetStatus("A GS20 calibration is 64 KB; that file is 0x" +
+                              cal.Length.ToString("X") + " bytes");
+                    return;
+                }
+
+                // Correct the checksum on the way in, so what is held here is
+                // exactly what would be written.
+                ushort stored = Gs20Checksum.Stored(cal);
+                _tcuCalToWrite = Gs20Checksum.Correct(cal);
+                ushort corrected = Gs20Checksum.Stored(_tcuCalToWrite);
+
+                WriteTcuCal.IsEnabled = true;
+
+                string version = Gs20Checksum.ReadVersion(_tcuCalToWrite);
+                SetStatus("Loaded " + Path.GetFileName(path) +
+                          (version != null ? " (" + version + ")" : string.Empty) +
+                          (stored == corrected
+                              ? ", checksum already correct"
+                              : ", checksum corrected 0x" + stored.ToString("X4") +
+                                " to 0x" + corrected.ToString("X4")) +
+                          (CalibrationMatchesTransmission(version)
+                              ? string.Empty
+                              : " - does NOT match the identified transmission"));
+            }
+            catch (Exception ex)
+            {
+                _tcuCalToWrite = null;
+                WriteTcuCal.IsEnabled = false;
+                SetStatus("Could not load the calibration: " + ex.Message);
+                await MessageAsync(Describe(ex), "Load Calibration");
+            }
+        }
+
+
+        /// <summary>
+        /// Whether a calibration file belongs on the transmission that answered.
+        ///
+        /// A calibration names itself like "G2210_0090C0ER10", where the four
+        /// digits after the underscore are the release. The transmission reports
+        /// that same release as its software number, so "0090" lines up with a
+        /// reported 90. The "C0" that follows is a variant marker the module
+        /// never reports, so it takes no part in the comparison.
+        ///
+        /// Anything that cannot be lined up counts as a mismatch: warning
+        /// needlessly is cheaper than staying quiet about a real one.
+        /// </summary>
+        private bool CalibrationMatchesTransmission(string fileVersion)
+        {
+            string release = Gs20Checksum.ReadRelease(fileVersion);
+            if (release == null) return false;
+
+            // Only the reported software number is compared. A part number would
+            // have to be matched by substring, which invents agreement that is
+            // not there, and a wrong match here is the failure that stays quiet.
+            string reported = (_tcuIdentSwNr ?? string.Empty).Trim().TrimStart('0');
+            if (reported.Length == 0) return false;
+
+            return string.Equals(release, reported, StringComparison.OrdinalIgnoreCase);
+        }
+
+
+        private string DescribeIdentifiedSoftware()
+        {
+            string software = string.IsNullOrWhiteSpace(_tcuIdentSwNr) ? null : _tcuIdentSwNr.Trim();
+            string part = string.IsNullOrWhiteSpace(_tcuIdentBmwNr) ? null : _tcuIdentBmwNr.Trim();
+
+            if (software == null && part == null) return "not identified";
+            if (software != null && part != null) return part + " (software " + software + ")";
+            return software ?? part;
+        }
+
+        /// <summary>
+        /// Erases and reprograms the transmission calibration over raw DS2.
+        ///
+        /// This is the one path in the app that drives a module without EDIABAS,
+        /// because the GS20's SGBD has no programming job. Between the erase and
+        /// the commit the transmission holds no valid calibration, so the checks
+        /// in front of it matter more than the speed of getting past them.
+        /// </summary>
+        private async void WriteTcuCal_Click(object sender, RoutedEventArgs e)
+        {
+            if (_tcuCalToWrite == null)
+            {
+                SetStatus("Load a calibration first");
+                return;
+            }
+
+            string portProblem = CheckPort(Global.Port);
+            if (portProblem != null)
+            {
+                SetStatus("Port unavailable");
+                await MessageAsync(portProblem, "Write Calibration");
+                return;
+            }
+
+            // A calibration built for different software can drive the box badly
+            // even though it flashes cleanly, so a mismatch has to be deliberate.
+            string fileVersion = Gs20Checksum.ReadVersion(_tcuCalToWrite);
+            if (!CalibrationMatchesTransmission(fileVersion))
+            {
+                if (!await ConfirmWithAcknowledgementAsync(
+                        "This calibration was not built for the transmission that answered.\n\n" +
+                        "Transmission: " + DescribeIdentifiedSoftware() + "\n" +
+                        "Calibration file: " + (fileVersion ?? "no version found") + "\n\n" +
+                        "Writing software meant for another gearbox can make it shift badly or " +
+                        "not at all. Only continue if you know this calibration belongs on this " +
+                        "transmission. You do this at your own risk.",
+                        "I understand this calibration may not match, and I accept the risk.",
+                        "Calibration does not match"))
+                {
+                    SetStatus("Write cancelled: the calibration does not match the transmission");
+                    return;
+                }
+            }
+
+            if (!await ConfirmAsync(
+                    "This erases and reprograms the transmission calibration at 0x" +
+                    Gs20CalWriter.CalAddress.ToString("X6") + ".\n\n" +
+                    "Until it finishes the transmission has no valid calibration. Do not switch " +
+                    "the ignition off or unplug the cable. Keep the voltage steady.\n\nWrite now?",
+                    "Write Calibration"))
+            {
+                return;
+            }
+
+            ReadTcuCal.IsEnabled = LoadTcuCal.IsEnabled = false;
+            WriteTcuCal.IsEnabled = false;
+            UpdateProgressBar(0);
+
+            try
+            {
+                ShowProgressAsFlashing(true);
+                using (FlashLog.Session("tcu-cal-write", out _))
+                {
+                    FlashLog.Note("TCU " + _tcuSgbd + " / cal 0x" +
+                                  Gs20CalWriter.CalAddress.ToString("X6") + " / checksum 0x" +
+                                  Gs20Checksum.Stored(_tcuCalToWrite).ToString("X4"));
+
+                    byte[] image = _tcuCalToWrite;
+                    bool fastMode = TcuFastMode.IsChecked == true;
+                    var progress = new Progress<int>(p =>
+                    {
+                        UpdateProgressBar((uint)p);
+                        SetStatus(p + "%");
+                    });
+                    _tcuWriteErased = false;
+
+                    await Task.Run(() =>
+                    {
+                        using (SleepBlocker.Acquire())
+                        using (var link = new Ds2SerialLink(Global.Port, FlashLog.Note))
+                        {
+                            var writer = new Gs20CalWriter(link, FlashLog.Note);
+
+                            // The session has to be open before anything else is
+                            // asked of the module: without it even a supply
+                            // reading comes back refused, which reads like a
+                            // hardware fault rather than a missing step.
+                            writer.OpenSession();
+                            FlashLog.Note("session open");
+
+                            // Worth knowing, not worth failing over. A module
+                            // left mid-session by an earlier run refuses this
+                            // while still flashing perfectly well.
+                            try
+                            {
+                                decimal volts = writer.ReadBatteryVolts();
+                                FlashLog.Note("battery " + volts.ToString("0.0") + " V");
+                                if (volts > 0m && volts < 11.5m)
+                                    throw new InvalidOperationException(
+                                        "Battery is " + volts.ToString("0.0") + " V, which is too " +
+                                        "low to flash safely. Put a charger on it and try again.");
+                            }
+                            catch (InvalidOperationException ex) when (!ex.Message.StartsWith("Battery"))
+                            {
+                                FlashLog.Note("battery reading unavailable: " + ex.Message);
+                            }
+
+                            // Five hundred odd telegrams at 9600 leaves the
+                            // calibration erased for minutes rather than tens of
+                            // seconds. The change is made after the session is
+                            // open and before anything is erased, so a module
+                            // that will not take it costs only speed.
+                            if (fastMode)
+                            {
+                                try
+                                {
+                                    link.SwitchBaud(Ds2SerialLink.FastBaud);
+                                    FlashLog.Note("baud " + link.Baud);
+                                }
+                                catch (Exception ex)
+                                {
+                                    FlashLog.Note("staying at " + link.Baud + " baud: " + ex.Message);
+                                }
+                            }
+
+                            try
+                            {
+                                writer.Write(image, progress);
+                            }
+                            finally
+                            {
+                                _tcuWriteErased = writer.EraseStarted;
+
+                                // Leave the module on the rate the rest of the
+                                // app expects to find it on.
+                                try { link.SwitchBaud(Ds2SerialLink.DefaultBaud); }
+                                catch (Exception) { }
+
+                                // And out of programming mode, or it holds the
+                                // line and the engine control unit stops
+                                // identifying.
+                                writer.CloseSession();
+                            }
+                        }
+                    });
+
+                    SetStatus("Calibration written. Cycle the ignition before driving.");
+                    await MessageAsync(
+                        "The calibration was written and the transmission confirmed it.\n\n" +
+                        "Cycle the ignition, then check for stored faults before driving.",
+                        "Write Calibration");
+                }
+            }
+            catch (Exception ex)
+            {
+                SetStatus("Calibration write failed: " + ex.Message);
+
+                // Only warn about a half-written calibration when one is
+                // actually possible. Stopping before the erase leaves the
+                // transmission exactly as it was.
+                string aftermath = _tcuWriteErased
+                    ? "\n\nThe transmission may be holding an incomplete calibration. Its boot " +
+                      "block and program are untouched, so it still answers and can be written " +
+                      "again: fix the cause, then write a known-good calibration before driving."
+                    : "\n\nNothing was erased or written, so the calibration on the transmission " +
+                      "is unchanged.";
+
+                await MessageAsync(Describe(ex) + aftermath, "Write Calibration");
+            }
+            finally
+            {
+                ShowProgressAsFlashing(false);
+                UpdateProgressBar(0);
+                ReadTcuCal.IsEnabled = true;
+                LoadTcuCal.IsEnabled = string.Equals(_tcuSgbd, "gs20.prg",
+                                                     StringComparison.OrdinalIgnoreCase);
+                WriteTcuCal.IsEnabled = _tcuCalToWrite != null;
+            }
+        }
+
+        /// <summary>
+        /// A short note on whether a calibration we just read carries a checksum
+        /// that matches its own data. A complete, healthy read always does; a
+        /// mismatch means either the read came back short or the box is running
+        /// a calibration it will reject on the next power-up. Only the GS20's
+        /// checksum is known, so other transmissions say nothing.
+        /// </summary>
+        private string DescribeCalChecksum(byte[] cal)
+        {
+            bool isGs20 = string.Equals(_tcuSgbd, "gs20.prg", StringComparison.OrdinalIgnoreCase);
+            if (!isGs20 || cal == null || cal.Length < Gs20Checksum.CalLength)
+                return string.Empty;
+
+            return Gs20Checksum.Verify(cal)
+                ? ", checksum valid"
+                : ", checksum does NOT match (stored 0x" +
+                  Gs20Checksum.Stored(cal).ToString("X4") + ", expected 0x" +
+                  Gs20Checksum.Compute(cal).ToString("X4") + ")";
+        }
+
+        private void ShowTcuIdent(EdiabasNet ediabas, string sgbdLabel)
+        {
+            string bmwNr = GetResult_String("ID_BMW_NR", ediabas.ResultSets);
+            string hwNr = GetResult_String("ID_HW_NR", ediabas.ResultSets);
+            string swNr = GetResult_String("ID_SW_NR", ediabas.ResultSets);
+            _tcuIdentSwNr = swNr;
+            _tcuIdentBmwNr = bmwNr;
+
+            Dispatcher.UIThread.Post(() =>
+            {
+                DMEType_Box.Text = "TCU";
+                HWRef_Box.Text = hwNr;
+                SWRef_Box.Text = swNr;
+                programStatus_Box.Text = bmwNr;
+                VIN_Box.Text = string.Empty;
+                progRef_Box.Text = sgbdLabel;
+                diagProtocol_Box.Text = Global.diagProtocol;
+                ReadTcuCal.IsEnabled = true;
+
+                // The fault tab reads whichever module is selected there, so a
+                // transmission that answers is reason enough to open it.
+                FaultsTab.IsEnabled = true;
+
+                // Only the GS20's calibration layout and checksum are known, so
+                // the write tooling stays shut for any other transmission.
+                bool isGs20 = string.Equals(_tcuSgbd, "gs20.prg", StringComparison.OrdinalIgnoreCase);
+                LoadTcuCal.IsEnabled = isGs20;
+                if (!isGs20)
+                {
+                    _tcuCalToWrite = null;
+                    WriteTcuCal.IsEnabled = false;
+                }
+            });
+            SetStatus("TCU identified (" + sgbdLabel + ")");
+        }
+
+        /// <summary>
+        /// Starts EDIABAS on a specific SGBD/group file, or returns null if it
+        /// cannot be resolved (e.g. a group probe that fails through this
+        /// transport). Never throws; the caller decides the fallback.
+        /// </summary>
+        private EdiabasNet StartEdiabasSgbd(string sgbd)
+        {
+            EdiabasNet ediabas = new EdiabasNet();
+            EdInterfaceBase edInterface = new EdInterfaceObd();
+            ediabas.EdInterfaceClass = edInterface;
+            ediabas.ProgressJobFunc = ProgressJobFunc;
+            ediabas.ErrorRaisedFunc = ErrorRaisedFunc;
+            ((EdInterfaceObd)edInterface).ComPort = Global.Port;
+            ediabas.SetConfigProperty("EcuPath", Global.ecuPath);
+            ediabas.ResultsRequests = string.Empty;
+            try
+            {
+                ediabas.ResolveSgbdFile(sgbd);
+                return ediabas;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine("ResolveSgbdFile(" + sgbd + ") failed: " +
+                    EdiabasNet.GetExceptionText(ex));
+                ediabas.Dispose();
+                return null;
             }
         }
 
@@ -1052,8 +1745,8 @@ namespace BmwebFlasher
                         ReadTune.IsEnabled = true;
                         LoadFile.IsEnabled = true;
                         FullBin_CheckBox.IsEnabled = true;
-                        // Fault-code jobs need a resolved SGBD and a talking DME,
-                        // both of which a successful identify has just proven.
+                        // Fault-code jobs need a resolved SGBD and a module that
+                        // answers, both of which a successful identify proves.
                         FaultsTab.IsEnabled = true;
                     }
 
@@ -1446,6 +2139,9 @@ namespace BmwebFlasher
             bool success = true;
             bool fullBin = FullBin_CheckBox.IsChecked == true;
 
+            ShowProgressAsFlashing(true);
+            try
+            {
             using (FlashLog.Session("flash-tune", out string logPath))
             {
             FlashLog.Note("DME " + Global.HW_Ref + " / prog " + Global.Prog_Ref +
@@ -1505,6 +2201,8 @@ namespace BmwebFlasher
             // still-releasing port node cannot report a false "Port unavailable".
             await Task.Run(() => IdentDME(preflightPort: false));
             } // FlashLog session
+            }
+            finally { ShowProgressAsFlashing(false); }
         }
 
         private async Task Flashfull()
@@ -1512,6 +2210,9 @@ namespace BmwebFlasher
             Checksums_Signatures ChecksumsSignatures = new Checksums_Signatures();
             bool success = true;
 
+            ShowProgressAsFlashing(true);
+            try
+            {
             using (FlashLog.Session("flash-program", out string logPath))
             {
             FlashLog.Note("DME " + Global.HW_Ref + " / prog " + Global.Prog_Ref +
@@ -1605,6 +2306,8 @@ namespace BmwebFlasher
             // Re-identify after the port is released; see FlashDME_Data.
             await Task.Run(() => IdentDME(preflightPort: false));
             } // FlashLog session
+            }
+            finally { ShowProgressAsFlashing(false); }
         }
 
         /// <summary>
