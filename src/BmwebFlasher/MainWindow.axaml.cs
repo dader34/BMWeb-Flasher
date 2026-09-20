@@ -333,6 +333,7 @@ namespace BmwebFlasher
             _tcuCalToWrite = null;
             _tcuSgbd = null;
             _tcuIdentSwNr = _tcuIdentBmwNr = null;
+            RefreshNoUpshiftGate();
             SetStatus("Module: " + (_flashTcu ? "TCU (transmission)" : "DME (engine)"));
         }
 
@@ -617,6 +618,8 @@ namespace BmwebFlasher
 
                 WriteTcuCal.IsEnabled = true;
 
+                RefreshNoUpshiftGate();
+
                 string version = Gs20Checksum.ReadVersion(_tcuCalToWrite);
                 SetStatus("Loaded " + Path.GetFileName(path) +
                           (version != null ? " (" + version + ")" : string.Empty) +
@@ -632,6 +635,7 @@ namespace BmwebFlasher
             {
                 _tcuCalToWrite = null;
                 WriteTcuCal.IsEnabled = false;
+                RefreshNoUpshiftGate();
                 SetStatus("Could not load the calibration: " + ex.Message);
                 await MessageAsync(Describe(ex), "Load Calibration");
             }
@@ -673,6 +677,65 @@ namespace BmwebFlasher
             if (software == null && part == null) return "not identified";
             if (software != null && part != null) return part + " (software " + software + ")";
             return software ?? part;
+        }
+
+        /// <summary>
+        /// Why the upshift patch cannot be offered, or null when it can.
+        ///
+        /// It is gated on the loaded calibration rather than on what the car
+        /// reports, because the patch rewrites tables at fixed offsets and the
+        /// only thing that makes those offsets meaningful is the layout of the
+        /// file itself. A calibration that already has the tables raised is
+        /// refused too, so ticking the box always means a change.
+        /// </summary>
+        private string NoUpshiftBlockedReason()
+        {
+            if (_tcuCalToWrite == null)
+                return "Load a calibration first. The patch is applied to the file, not to the car.";
+
+            if (!Gs20NoUpshift.IsApplicable(_tcuCalToWrite))
+                return "This calibration does not have the upshift tables the patch expects, so " +
+                       "it cannot be applied to it safely.";
+
+            if (Gs20NoUpshift.IsApplied(_tcuCalToWrite))
+                return "This calibration already has its upshift points raised.";
+
+            return null;
+        }
+
+        private void RefreshNoUpshiftGate()
+        {
+            bool allowed = NoUpshiftBlockedReason() == null;
+            NoUpshift_CheckBox.IsEnabled = allowed;
+            if (!allowed)
+                NoUpshift_CheckBox.IsChecked = false;
+        }
+
+        private async void NoUpshift_CheckBox_Changed(object sender, RoutedEventArgs e)
+        {
+            if (NoUpshift_CheckBox.IsChecked != true)
+                return;
+
+            // Re-check on the tick: the loaded calibration may have changed
+            // since the box was enabled.
+            string blocked = NoUpshiftBlockedReason();
+            if (blocked != null)
+            {
+                NoUpshift_CheckBox.IsChecked = false;
+                NoUpshift_CheckBox.IsEnabled = false;
+                await MessageAsync(blocked, "Remove auto upshift");
+                return;
+            }
+
+            if (!await ConfirmAsync(
+                    "This raises every upshift point out of reach, so the gearbox holds whichever " +
+                    "gear is selected and will not change up on its own.\n\n" +
+                    "The engine will run to the limiter rather than shifting, and the car will not " +
+                    "move off again until you shift manually.\n\nApply it to the loaded calibration?",
+                    "Remove auto upshift"))
+            {
+                NoUpshift_CheckBox.IsChecked = false;
+            }
         }
 
         /// <summary>
@@ -719,9 +782,14 @@ namespace BmwebFlasher
                 }
             }
 
+            string patchNote = NoUpshift_CheckBox.IsChecked == true
+                ? "Automatic upshifts will be removed from the calibration first.\n\n"
+                : string.Empty;
+
             if (!await ConfirmAsync(
                     "This erases and reprograms the transmission calibration at 0x" +
                     Gs20CalWriter.CalAddress.ToString("X6") + ".\n\n" +
+                    patchNote +
                     "Until it finishes the transmission has no valid calibration. Do not switch " +
                     "the ignition off or unplug the cable. Keep the voltage steady.\n\nWrite now?",
                     "Write Calibration"))
@@ -742,7 +810,14 @@ namespace BmwebFlasher
                                   Gs20CalWriter.CalAddress.ToString("X6") + " / checksum 0x" +
                                   Gs20Checksum.Stored(_tcuCalToWrite).ToString("X4"));
 
-                    byte[] image = _tcuCalToWrite;
+                    // Patch a copy, so unticking the box gets the loaded
+                    // calibration back rather than a permanently altered one.
+                    byte[] image = NoUpshift_CheckBox.IsChecked == true
+                        ? Gs20NoUpshift.Apply(_tcuCalToWrite)
+                        : _tcuCalToWrite;
+                    if (!ReferenceEquals(image, _tcuCalToWrite))
+                        FlashLog.Note("auto upshift removed");
+
                     bool fastMode = TcuFastMode.IsChecked == true;
                     var progress = new Progress<int>(p =>
                     {

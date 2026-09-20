@@ -19,6 +19,7 @@
          so the tests stay headless and do not drag in a UI toolkit. -->
     <Compile Include="..\..\src\BmwebFlasher\EwsDelete.cs" Link="EwsDelete.cs" />
     <Compile Include="..\..\src\BmwebFlasher\Gs20Checksum.cs" Link="Gs20Checksum.cs" />
+    <Compile Include="..\..\src\BmwebFlasher\Gs20NoUpshift.cs" Link="Gs20NoUpshift.cs" />
     <Compile Include="..\..\src\BmwebFlasher\Ds2Telegram.cs" Link="Ds2Telegram.cs" />
     <Compile Include="..\..\src\BmwebFlasher\Gs20CalWriter.cs" Link="Gs20CalWriter.cs" />
   </ItemGroup>
