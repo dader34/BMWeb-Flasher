@@ -81,6 +81,9 @@
                 <Button x:Name="WriteTcuCal" Content="Write Calibration" HorizontalAlignment="Stretch"
                         Click="WriteTcuCal_Click" IsEnabled="False"
                         ToolTip.Tip="Erase and reprogram the transmission calibration over raw DS2."/>
+                <CheckBox x:Name="NoUpshift_CheckBox" Content="Remove auto upshift" IsEnabled="False"
+                          Click="NoUpshift_CheckBox_Changed"
+                          ToolTip.Tip="Raise every upshift point out of reach so the gearbox holds the gear you select. Applied to the loaded calibration before it is written."/>
                 <CheckBox x:Name="TcuFastMode" Content="Fast mode" IsChecked="True"
                           ToolTip.Tip="Ask the transmission to talk at 125000 baud instead of 9600. Falls back on its own if the transmission will not."/>
                 <TextBlock Text="Take a backup read first and keep the engine off with a charger on."
