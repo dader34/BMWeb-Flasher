@@ -20,6 +20,7 @@ namespace BmwebFlasher
         {
             InitializeComponent();
             Title = Global.Title;
+            ProgressDME.Foreground = ReadingBrush;
             ModuleSelect.SelectedIndex = 0; // fault-codes module, DME by default
             // The flashing module starts UNSELECTED: the user must choose DME or
             // TCU before any control unit's buttons appear. This keeps the two
@@ -85,15 +86,24 @@ namespace BmwebFlasher
             Dispatcher.UIThread.Post(() => ProgressDME.Value = Math.Min(progress, 100),
                                      DispatcherPriority.Background);
 
+        private static readonly Avalonia.Media.IBrush FlashingBrush =
+            new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.FromRgb(0xC0, 0x39, 0x2B));
+
+        private static readonly Avalonia.Media.IBrush ReadingBrush =
+            new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.FromRgb(0x2E, 0x86, 0xC1));
+
         /// <summary>
         /// Colours the progress bar red while something is being written to a
-        /// module, so a flash in progress is never mistaken for a read.
+        /// module, so a flash in progress is never mistaken for a read, and blue
+        /// the rest of the time.
+        ///
+        /// Both states set a colour outright. Clearing the brush instead leaves
+        /// the bar with no fill at all, so it reads as empty however far along
+        /// it is.
         /// </summary>
         private void ShowProgressAsFlashing(bool flashing) =>
             Dispatcher.UIThread.Post(() =>
-                ProgressDME.Foreground = flashing
-                    ? new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.FromRgb(0xC0, 0x39, 0x2B))
-                    : null);
+                ProgressDME.Foreground = flashing ? FlashingBrush : ReadingBrush);
 
         /// <summary>
         /// Replaces WPF MessageBox.Show(..., YesNo), which has no Avalonia
