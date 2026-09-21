@@ -358,6 +358,8 @@ namespace BmwebFlasher
             // made a failing identify look like the button did nothing at all.
             try
             {
+                await Task.Run(FindTheCableIfNeeded);
+
                 if (_flashTcu)
                     await Task.Run(() => IdentTcu());
                 else
@@ -1716,6 +1718,78 @@ namespace BmwebFlasher
         /// the common one on macOS -- INPA/ISTA or a stray process keeps it).
         /// Returns null when the port is usable, or a specific message.
         /// </summary>
+        /// <summary>Set once a port has been proven to reach a module.</summary>
+        private bool _portProven;
+
+        /// <summary>
+        /// Finds the cable by trying every port until one answers.
+        ///
+        /// A port name says nothing about what is on the other end, least of
+        /// all on Windows where a cable is COM3 and a motherboard header is
+        /// COM1. Rather than guess from the name or the device description, the
+        /// ports are simply asked: the one a module replies on is the cable, by
+        /// definition. The answer is kept for the rest of the session, since
+        /// the sweep costs a second or two per dead port.
+        ///
+        /// The saved port is tried first, so the usual case costs one probe.
+        /// </summary>
+        private void FindTheCableIfNeeded()
+        {
+            if (_portProven && Ports.List().Contains(Global.Port)) return;
+
+            var candidates = new List<string>();
+            if (!string.IsNullOrEmpty(Global.Port)) candidates.Add(Global.Port);
+            foreach (string port in Ports.List())
+                if (!candidates.Contains(port)) candidates.Add(port);
+
+            if (candidates.Count == 0) return;
+
+            foreach (string port in candidates)
+            {
+                if (!ModuleAnswersOn(port)) continue;
+
+                if (port != Global.Port)
+                {
+                    Global.Port = port;
+                    SetStatus("Found the cable on " + port);
+                }
+                _portProven = true;
+                return;
+            }
+
+            // Nothing answered. Leave the port alone and let the identify fail
+            // with its own message, which says more than this could.
+        }
+
+        /// <summary>
+        /// Whether a module replies on this port. The engine control unit is
+        /// asked for its identity: the cheapest exchange that proves something
+        /// is listening rather than merely that the port opened.
+        /// </summary>
+        private bool ModuleAnswersOn(string port)
+        {
+            if (CheckPort(port) != null) return false;
+
+            string previous = Global.Port;
+            try
+            {
+                Global.Port = port;
+                using EdiabasNet ediabas = StartEdiabas();
+                if (ediabas == null) return false;
+
+                return ExecuteJob(ediabas, "IDENT", string.Empty)
+                    || ExecuteJob(ediabas, "hardware_referenz_lesen", string.Empty);
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+            finally
+            {
+                Global.Port = previous;
+            }
+        }
+
         private static string CheckPort(string port)
         {
             if (string.IsNullOrWhiteSpace(port))
