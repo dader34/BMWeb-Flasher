@@ -26,8 +26,10 @@ namespace BmwebFlasher
             // TCU before any control unit's buttons appear. This keeps the two
             // modules' actions from ever being confused.
 
-            // Auto-detect the cable if none is saved yet.
-            if (string.IsNullOrEmpty(Global.Port))
+            // Auto-detect the cable when none is saved, and again when the saved
+            // one is no longer there. Without the second case a port that was
+            // saved once, or guessed at, sticks even after the cable moves.
+            if (string.IsNullOrEmpty(Global.Port) || !Ports.List().Contains(Global.Port))
             {
                 string auto = Ports.AutoDetect();
                 if (!string.IsNullOrEmpty(auto))

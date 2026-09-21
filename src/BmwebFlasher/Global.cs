@@ -75,19 +75,30 @@ namespace BmwebFlasher
                 .Where(p => !(p.Contains("/tty.") && cables.Contains(p.Replace("/tty.", "/cu."))))
                 .ToList();
 
-            return cables.OrderByDescending(Score).ToList();
+            // Score once per port: on Windows this walks the registry, and
+            // OrderByDescending would otherwise call it repeatedly.
+            return cables
+                .Select(p => (Port: p, Rank: Score(p)))
+                .OrderByDescending(x => x.Rank)
+                .Select(x => x.Port)
+                .ToList();
         }
 
         /// <summary>The single best guess, or null if nothing plausible is present.</summary>
+        /// <summary>
+        /// The most likely cable, or null when nothing is plugged in.
+        ///
+        /// Returning a guess when no port exists is worse than returning
+        /// nothing: it gets saved as though it were a real detection, and the
+        /// cable plugged in afterwards is then never looked for.
+        /// </summary>
         public static string AutoDetect()
         {
-            if (OperatingSystem.IsWindows())
-            {
-                var win = List();
-                return win.Count > 0 ? win[0] : "COM1";
-            }
-            var list = List();
-            return list.Count > 0 ? list[0] : null;
+            // A port that scores below zero is something known not to be a
+            // cable, such as a Bluetooth link. It stays in the list so it can
+            // be picked by hand, but it is never chosen automatically.
+            string best = List().FirstOrDefault();
+            return best != null && Score(best) >= 0 ? best : null;
         }
 
         private static bool IsPlausibleCable(string port)
@@ -109,12 +120,76 @@ namespace BmwebFlasher
         private static int Score(string port)
         {
             string p = port.ToLowerInvariant();
+
+            // A Windows port name is just COM3, which says nothing about what is
+            // on the other end, so the device description is what distinguishes
+            // a USB cable from a motherboard port that is always present.
+            if (OperatingSystem.IsWindows())
+            {
+                string description = WindowsDescription(port);
+                if (description.Contains("ftdi") || description.Contains("ft232") ||
+                    description.Contains("usb serial"))
+                    return 3;
+                if (description.Contains("ch340") || description.Contains("cp210") ||
+                    description.Contains("prolific") || description.Contains("pl2303"))
+                    return 2;
+                if (description.Contains("bluetooth")) return -1;
+                return 0;
+            }
+
             // On macOS prefer the cu. node over its tty. twin.
             int cuBonus = p.Contains("/cu.") ? 4 : 0;
             if (p.Contains("usbserial") || p.Contains("ftdi") || p.Contains("ttyusb")) return 3 + cuBonus;
             if (p.Contains("wchusbserial") || p.Contains("slab")) return 2;
             if (p.Contains("usbmodem") || p.Contains("ttyacm")) return 1;
             return 0;
+        }
+
+        /// <summary>
+        /// What Windows calls the device behind a COM port, lower-cased, or an
+        /// empty string when it cannot be read. Registry only: the alternative
+        /// is a WMI query, which pulls in a dependency and is far slower.
+        /// </summary>
+        private static string WindowsDescription(string port)
+        {
+            if (!OperatingSystem.IsWindows()) return string.Empty;
+
+            try
+            {
+                using var enumKey = Microsoft.Win32.Registry.LocalMachine
+                    .OpenSubKey(@"SYSTEM\CurrentControlSet\Enum");
+                if (enumKey == null) return string.Empty;
+
+                foreach (string busName in enumKey.GetSubKeyNames())
+                {
+                    using var bus = enumKey.OpenSubKey(busName);
+                    if (bus == null) continue;
+
+                    foreach (string deviceName in bus.GetSubKeyNames())
+                    {
+                        using var device = bus.OpenSubKey(deviceName);
+                        if (device == null) continue;
+
+                        foreach (string instanceName in device.GetSubKeyNames())
+                        {
+                            using var instance = device.OpenSubKey(instanceName);
+                            using var parameters = instance?.OpenSubKey("Device Parameters");
+                            if (parameters?.GetValue("PortName") as string != port) continue;
+
+                            string name = instance.GetValue("FriendlyName") as string
+                                       ?? instance.GetValue("DeviceDesc") as string
+                                       ?? string.Empty;
+                            return name.ToLowerInvariant();
+                        }
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                // A port we cannot describe simply scores as unremarkable.
+            }
+
+            return string.Empty;
         }
     }
 

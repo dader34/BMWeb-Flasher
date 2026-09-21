@@ -145,26 +145,42 @@ namespace BmwebFlasher
         /// </summary>
         private static async Task ExtractEcuAsync(string archive, string destDir, CancellationToken ct)
         {
-            // zstd -dc <archive> | tar -x -C <destDir> --strip-components=2 E46/ecu
-            // bsdtar (macOS) and GNU tar both accept --strip-components and a
-            // path filter; reading zstd from stdin keeps it to two known tools.
-            string script =
-                "set -e; " +
-                "zstd -dc " + Quote(archive) + " | " +
-                "tar -x -C " + Quote(destDir) + " --strip-components=2 'E46/ecu'";
-
             var psi = new System.Diagnostics.ProcessStartInfo
             {
-                FileName = "/bin/sh",
                 RedirectStandardError = true,
                 RedirectStandardOutput = true,
                 UseShellExecute = false,
             };
-            psi.ArgumentList.Add("-c");
-            psi.ArgumentList.Add(script);
+
+            if (OperatingSystem.IsWindows())
+            {
+                // Windows 10 and later ship bsdtar as tar.exe, which reads zstd
+                // itself. There is no shell to pipe through and no zstd binary
+                // to pipe from, so the archive is handed straight to tar.
+                psi.FileName = "tar";
+                psi.ArgumentList.Add("-x");
+                psi.ArgumentList.Add("-f");
+                psi.ArgumentList.Add(archive);
+                psi.ArgumentList.Add("-C");
+                psi.ArgumentList.Add(destDir);
+                psi.ArgumentList.Add("--strip-components=2");
+                psi.ArgumentList.Add("E46/ecu");
+            }
+            else
+            {
+                // zstd -dc <archive> | tar -x -C <destDir> --strip-components=2 E46/ecu
+                // bsdtar (macOS) and GNU tar both accept --strip-components and a
+                // path filter; reading zstd from stdin keeps it to two known tools.
+                psi.FileName = "/bin/sh";
+                psi.ArgumentList.Add("-c");
+                psi.ArgumentList.Add(
+                    "set -e; " +
+                    "zstd -dc " + Quote(archive) + " | " +
+                    "tar -x -C " + Quote(destDir) + " --strip-components=2 'E46/ecu'");
+            }
 
             using var proc = System.Diagnostics.Process.Start(psi)
-                ?? throw new InvalidOperationException("Could not start the extractor (zstd/tar).");
+                ?? throw new InvalidOperationException("Could not start the extractor.");
 
             string stderr = await proc.StandardError.ReadToEndAsync(ct);
             await proc.WaitForExitAsync(ct);
@@ -172,8 +188,11 @@ namespace BmwebFlasher
             if (proc.ExitCode != 0)
             {
                 throw new InvalidOperationException(
-                    "Extracting the SGBD archive failed. Is `zstd` installed? " +
-                    "(brew install zstd)\n\n" + stderr.Trim());
+                    OperatingSystem.IsWindows()
+                        ? "Extracting the SGBD archive failed. This needs the tar that ships " +
+                          "with Windows 10 and later.\n\n" + stderr.Trim()
+                        : "Extracting the SGBD archive failed. Is `zstd` installed? " +
+                          "(brew install zstd)\n\n" + stderr.Trim());
             }
         }
 
