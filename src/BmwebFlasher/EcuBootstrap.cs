@@ -1,4 +1,5 @@
 using System;
+using System.Formats.Tar;
 using System.IO;
 using System.Net.Http;
 using System.Threading;
@@ -73,9 +74,10 @@ namespace BmwebFlasher
         /// -1 when the total size is unknown) via <paramref name="progress"/>.
         /// Returns the folder the SGBDs were written to.
         ///
-        /// Extraction shells out to `zstd | tar`, which ships with macOS (bsdtar)
-        /// and is present on Linux; this avoids adding a zstd/tar dependency to
-        /// the app for a once-per-install operation.
+        /// Extraction happens in process. It used to shell out to zstd and tar,
+        /// which worked on macOS and not on Windows: the tar that ships with
+        /// Windows recognises a zstd archive but hands the decoding to a zstd
+        /// binary, which is not installed.
         /// </summary>
         public static async Task<string> DownloadAndExtractAsync(
             IProgress<int> progress, CancellationToken ct = default)
@@ -145,57 +147,47 @@ namespace BmwebFlasher
         /// </summary>
         private static async Task ExtractEcuAsync(string archive, string destDir, CancellationToken ct)
         {
-            var psi = new System.Diagnostics.ProcessStartInfo
-            {
-                RedirectStandardError = true,
-                RedirectStandardOutput = true,
-                UseShellExecute = false,
-            };
+            // Decompress and untar in process. Shelling out to zstd and tar
+            // seemed reasonable on macOS, where both exist, but the tar that
+            // ships with Windows recognises a zstd archive and then tries to run
+            // a zstd binary to decode it, which is not installed. Doing it here
+            // removes the dependency on either platform.
+            await using var file = new FileStream(
+                archive, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, useAsync: true);
+            await using var decompressed = new ZstdSharp.DecompressionStream(file);
+            await using var tar = new TarReader(decompressed);
 
-            if (OperatingSystem.IsWindows())
+            const string Wanted = "E46/ecu/";
+            int written = 0;
+
+            while (await tar.GetNextEntryAsync(copyData: false, ct) is { } entry)
             {
-                // Windows 10 and later ship bsdtar as tar.exe, which reads zstd
-                // itself. There is no shell to pipe through and no zstd binary
-                // to pipe from, so the archive is handed straight to tar.
-                psi.FileName = "tar";
-                psi.ArgumentList.Add("-x");
-                psi.ArgumentList.Add("-f");
-                psi.ArgumentList.Add(archive);
-                psi.ArgumentList.Add("-C");
-                psi.ArgumentList.Add(destDir);
-                psi.ArgumentList.Add("--strip-components=2");
-                psi.ArgumentList.Add("E46/ecu");
+                ct.ThrowIfCancellationRequested();
+
+                if (entry.EntryType != TarEntryType.RegularFile) continue;
+                if (entry.DataStream == null) continue;
+
+                // The archive holds the whole data set; only the SGBDs are
+                // wanted, flattened out of their E46/ecu prefix.
+                string name = entry.Name.Replace('\\', '/');
+                if (!name.StartsWith(Wanted, StringComparison.OrdinalIgnoreCase)) continue;
+
+                string leaf = Path.GetFileName(name);
+                if (string.IsNullOrEmpty(leaf)) continue;
+
+                await using var dest = new FileStream(
+                    Path.Combine(destDir, leaf), FileMode.Create, FileAccess.Write,
+                    FileShare.None, 81920, useAsync: true);
+                await entry.DataStream.CopyToAsync(dest, ct);
+                written++;
             }
-            else
-            {
-                // zstd -dc <archive> | tar -x -C <destDir> --strip-components=2 E46/ecu
-                // bsdtar (macOS) and GNU tar both accept --strip-components and a
-                // path filter; reading zstd from stdin keeps it to two known tools.
-                psi.FileName = "/bin/sh";
-                psi.ArgumentList.Add("-c");
-                psi.ArgumentList.Add(
-                    "set -e; " +
-                    "zstd -dc " + Quote(archive) + " | " +
-                    "tar -x -C " + Quote(destDir) + " --strip-components=2 'E46/ecu'");
-            }
 
-            using var proc = System.Diagnostics.Process.Start(psi)
-                ?? throw new InvalidOperationException("Could not start the extractor.");
-
-            string stderr = await proc.StandardError.ReadToEndAsync(ct);
-            await proc.WaitForExitAsync(ct);
-
-            if (proc.ExitCode != 0)
+            if (written == 0)
             {
                 throw new InvalidOperationException(
-                    OperatingSystem.IsWindows()
-                        ? "Extracting the SGBD archive failed. This needs the tar that ships " +
-                          "with Windows 10 and later.\n\n" + stderr.Trim()
-                        : "Extracting the SGBD archive failed. Is `zstd` installed? " +
-                          "(brew install zstd)\n\n" + stderr.Trim());
+                    "The archive held no " + Wanted + " files. Its layout may have changed.");
             }
         }
 
-        private static string Quote(string path) => "'" + path.Replace("'", "'\\''") + "'";
     }
 }
