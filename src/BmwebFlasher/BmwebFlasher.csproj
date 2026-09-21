@@ -9,9 +9,9 @@
     <RootNamespace>BmwebFlasher</RootNamespace>
     <AssemblyName>BmwebFlasher</AssemblyName>
     <!-- Shown in the window title, which reads it back off the assembly. -->
-    <Version>1.0.0.1</Version>
-    <AssemblyVersion>1.0.0.1</AssemblyVersion>
-    <FileVersion>1.0.0.1</FileVersion>
+    <Version>1.0.0.2</Version>
+    <AssemblyVersion>1.0.0.2</AssemblyVersion>
+    <FileVersion>1.0.0.2</FileVersion>
     <!-- EdiabasLib's multi-targeting evaluates Windows TFMs during restore even
          when we only build net8.0, so the SDK needs this to resolve them. -->
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
@@ -28,15 +28,14 @@
       <IncludeAssets Condition="'$(Configuration)' != 'Debug'">None</IncludeAssets>
       <PrivateAssets Condition="'$(Configuration)' != 'Debug'">All</PrivateAssets>
     </PackageReference>
+    <PackageReference Include="ZstdSharp.Port" Version="0.8.8" />
   </ItemGroup>
 
   <ItemGroup>
     <!-- EdiabasLib's own Directory.Build.props chain does not reach this repo's
          root, so EnableWindowsTargeting has to ride along on the reference for
          its Windows TFMs to evaluate during restore. -->
-    <ProjectReference Include="..\..\external\ediabaslib\EdiabasLib\EdiabasLib\EdiabasLib.csproj"
-                      SetTargetFramework="TargetFramework=net8.0"
-                      GlobalPropertiesToRemove="">
+    <ProjectReference Include="..\..\external\ediabaslib\EdiabasLib\EdiabasLib\EdiabasLib.csproj" SetTargetFramework="TargetFramework=net8.0" GlobalPropertiesToRemove="">
       <AdditionalProperties>EnableWindowsTargeting=true</AdditionalProperties>
     </ProjectReference>
   </ItemGroup>
