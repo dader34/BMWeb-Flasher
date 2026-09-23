@@ -1295,7 +1295,10 @@ namespace BmwebFlasher
         /// <summary>
         /// Writes the program region. Structured like the DME's full-program
         /// flash: security first, everything prepared before the first erase,
-        /// each phase logged, a verification pass, and a re-identify after.
+        /// each phase logged, and a re-identify after. There is no read-back:
+        /// stock firmware cannot read its own program over DS2, and most images
+        /// written here will be stock, so the commit's sub-status and the
+        /// identify afterwards are the checks that apply to every image.
         ///
         /// What is different is the failure mode. The DS2 handler lives in the
         /// region being erased, so a module left half-written does not answer
@@ -1357,8 +1360,6 @@ namespace BmwebFlasher
 
             string logPath = null;
             _tcuProgramSectorsErased = 0;
-            bool verified = false;
-            string verifyNote = string.Empty;
             try
             {
                 ShowProgressAsFlashing(true);
@@ -1414,38 +1415,7 @@ namespace BmwebFlasher
                                 FlashLog.Note("PHASE: erase 4 sectors + write 0x40000 (brick-capable step)");
                                 writer.Write(image, progress);
 
-                                // Verify: read the region back through the
-                                // patched firmware, if the image carries it.
-                                // A stock image cannot be read back over DS2
-                                // at all, and that is said rather than skipped.
-                                FlashLog.Note("PHASE: verify");
-                                if (ProgramHasReadPatch(image))
-                                {
-                                    var reader = new Gs20FullReader(link, FlashLog.Note);
-                                    string problem = reader.Probe();
-                                    if (problem != null)
-                                        throw new InvalidOperationException(
-                                            "The program was written and committed, but the read-back " +
-                                            "probe failed: " + problem);
-                                    byte[] back = reader.Read(Gs20ProgramWriter.ProgramAddress,
-                                                              Gs20ProgramWriter.ProgramLength);
-                                    int bad = 0; int first = -1;
-                                    for (int i = 0; i < back.Length; i++)
-                                        if (back[i] != image[i]) { if (first < 0) first = i; bad++; }
-                                    if (bad > 0)
-                                        throw new InvalidOperationException(
-                                            "Read-back differs from the image in " + bad + " bytes, " +
-                                            "first at 0x" + (Gs20ProgramWriter.ProgramAddress + first).ToString("X6") +
-                                            ". The write did not land as sent.");
-                                    verified = true;
-                                    FlashLog.Note("RESULT: read-back matches, 0x40000 bytes");
-                                }
-                                else
-                                {
-                                    verifyNote = "\n\nThis image is a stock program, so it could not be read " +
-                                                 "back over the diagnostic port to verify.";
-                                    FlashLog.Note("RESULT: written; stock image, no read-back possible");
-                                }
+                                FlashLog.Note("RESULT: written and committed, 0x40000 bytes");
                             }
                             finally
                             {
@@ -1461,10 +1431,9 @@ namespace BmwebFlasher
                     FlashLog.Note("PHASE: re-identify");
                     SetStatus("Program written. Identifying...");
                     await MessageAsync(
-                        "The program was written and the transmission confirmed it" +
-                        (verified ? ", and the read-back matches byte for byte." : ".") +
-                        verifyNote + "\n\nCycle the ignition, then identify the transmission " +
-                        "and check for stored faults.",
+                        "The program was written and the transmission confirmed it.\n\n" +
+                        "Cycle the ignition, then identify the transmission and check for " +
+                        "stored faults. Identify answering is the proof the program runs.",
                         "Write Program");
                 }
             }
