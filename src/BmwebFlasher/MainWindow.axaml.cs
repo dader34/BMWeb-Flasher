@@ -165,8 +165,42 @@ namespace BmwebFlasher
                 }
             };
 
-            await dialog.ShowDialog(this);
+            await ShowModalAsync(dialog);
             return result;
+        }
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern bool EnableWindow(IntPtr hWnd, bool bEnable);
+
+        /// <summary>
+        /// Shows a modal dialog owned by this window, and makes sure this
+        /// window is usable again afterwards.
+        ///
+        /// On Windows a modal disables its owner for its lifetime and re-enables
+        /// it on close. Showing an Avalonia dialog in the same continuation
+        /// that a native file picker just returned from -- which is exactly
+        /// what loading a .0DA does -- overlapped that bookkeeping and left the
+        /// main window disabled for good: every click ignored, including close,
+        /// so the app looked frozen. Nothing else in the app chained a picker
+        /// straight into a dialog on its normal path, which is why only the
+        /// conversion showed it.
+        ///
+        /// Two defences. A trip through the dispatcher before showing lets the
+        /// picker's teardown finish first; and after the dialog closes the
+        /// owner is re-enabled at the Win32 level directly, so no mismatch in
+        /// the toolkit's own bookkeeping can leave it stuck.
+        /// </summary>
+        private async Task ShowModalAsync(Window dialog)
+        {
+            await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+            await dialog.ShowDialog(this);
+            await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+
+            if (OperatingSystem.IsWindows())
+            {
+                var handle = TryGetPlatformHandle();
+                if (handle != null) EnableWindow(handle.Handle, true);
+            }
         }
 
         /// <summary>
@@ -221,7 +255,7 @@ namespace BmwebFlasher
                 }
             };
 
-            await dialog.ShowDialog(this);
+            await ShowModalAsync(dialog);
             return result;
         }
 
@@ -276,7 +310,7 @@ namespace BmwebFlasher
                 }
             };
 
-            await dialog.ShowDialog(this);
+            await ShowModalAsync(dialog);
             return result;
         }
 
@@ -307,7 +341,7 @@ namespace BmwebFlasher
                     }
                 }
             };
-            await dialog.ShowDialog(this);
+            await ShowModalAsync(dialog);
         }
 
         // --- Click handlers -------------------------------------------------
@@ -380,7 +414,7 @@ namespace BmwebFlasher
                 }
             };
 
-            await dialog.ShowDialog(this);
+            await ShowModalAsync(dialog);
             SetStatus(string.IsNullOrEmpty(Global.Port) ? "No serial port set" : "Port: " + Global.Port);
         }
 
@@ -961,9 +995,15 @@ namespace BmwebFlasher
 
                     if (choice == 0 || choice == 2)          // save
                     {
-                        await SaveDumpAsync(
-                            Gs20Checksum.Correct(cal),
-                            Path.GetFileNameWithoutExtension(path) + "_converted");
+                        // Opened from a fresh dispatcher frame rather than
+                        // this continuation, for the same reason ChooseAsync
+                        // yields: a native picker chained straight behind a
+                        // modal dialog is what froze the window on Windows.
+                        byte[] toSave = Gs20Checksum.Correct(cal);
+                        string suggested = Path.GetFileNameWithoutExtension(path) + "_converted";
+                        await Dispatcher.UIThread.InvokeAsync(
+                            () => SaveDumpAsync(toSave, suggested),
+                            DispatcherPriority.Background);
                     }
 
                     if (choice == 0)                          // save only
