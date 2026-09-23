@@ -107,6 +107,18 @@
                 <Button x:Name="TestFullRead" Content="Read Selected Region" HorizontalAlignment="Stretch"
                         Click="TestFullRead_Click" IsEnabled="False"
                         ToolTip.Tip="Read outside the calibration using the patched program's subcode-8 read. A stock module answers B0 and nothing is written to the module either way."/>
+                <!-- Program write. The one path here whose failure is not
+                     recoverable over the diagnostic port: the DS2 handler
+                     lives in the region being rewritten, so a module left
+                     half-written stops answering and needs the boot-strap
+                     loader. Gated on ident, on the image's software level,
+                     and on an explicit acknowledgement. -->
+                <Button x:Name="LoadTcuProgram" Content="Load Program File" HorizontalAlignment="Stretch"
+                        Click="LoadTcuProgram_Click" IsEnabled="False"
+                        ToolTip.Tip="A 256 KB program region, a 512 KB full image, or a BMW .0PA. Its checksum is corrected on the way in."/>
+                <Button x:Name="WriteTcuProgram" Content="Write Program" HorizontalAlignment="Stretch"
+                        Click="WriteTcuProgram_Click" IsEnabled="False"
+                        ToolTip.Tip="Erase the four program sectors (0x0A0000-0x0DFFFF) and reprogram them. Not recoverable over the diagnostic port if it fails."/>
               </StackPanel>
             </StackPanel>
           </ScrollViewer>
