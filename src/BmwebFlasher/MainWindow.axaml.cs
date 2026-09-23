@@ -1400,15 +1400,21 @@ namespace BmwebFlasher
                                     "Supply is " + volts.ToString("0.0") + " V. A program write needs a " +
                                     "steady supply above 11.5 V; put a charger or bench supply on it.");
 
-                            FlashLog.Note("PHASE: unlock");
-                            session.Unlock();
-                            FlashLog.Note("unlocked");
-
+                            // Baud before unlock, never after: the switch
+                            // settles with an identify, and an identify closes
+                            // the session, which would throw the unlock away
+                            // and get the first erase refused. Same order the
+                            // calibration path proved on a real module.
                             if (fastMode)
                             {
                                 try { link.SwitchBaud(Ds2SerialLink.FastBaud); FlashLog.Note("baud " + link.Baud); }
                                 catch (Exception ex) { FlashLog.Note("staying at " + link.Baud + " baud: " + ex.Message); }
                             }
+
+                            FlashLog.Note("PHASE: session + unlock");
+                            session.OpenSession();
+                            session.Unlock();
+                            FlashLog.Note("unlocked");
 
                             try
                             {

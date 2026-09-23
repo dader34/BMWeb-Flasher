@@ -100,6 +100,12 @@ namespace BmwebFlasher
                       : " (corrected from 0x" +
                         Gs20ProgramChecksum.Stored(program).ToString("X4") + ")"));
 
+            // Prove the module really will take flash commands before erasing
+            // anything. The status request is a query: a module that is not
+            // open refuses it here, where refusal costs nothing, rather than
+            // at the first erase.
+            ConfirmFlashAccepted(cancel);
+
             // Erase every sector first, then write. Erasing as we go would
             // leave a longer window where an interruption means some sectors
             // are blank and others hold the old program.
@@ -128,6 +134,27 @@ namespace BmwebFlasher
         {
             byte[] image = Gs20ProgramChecksum.Corrected(program, out _);
             return image;   // 0xFF written to an erased cell leaves it 0xFF
+        }
+
+        private void ConfirmFlashAccepted(CancellationToken cancel)
+        {
+            byte[] reply;
+            try
+            {
+                reply = Exchange(AddressCommand(0x0F, ProgramAddress), NormalTimeoutMs,
+                                 "flash status", cancel, allowBusy: true);
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException(
+                    "The transmission did not answer a flash status request, so it is not open " +
+                    "for programming. Nothing was erased. (" + ex.Message + ")", ex);
+            }
+            byte? status = Ds2Telegram.Status(reply);
+            if (status != Ds2Telegram.StatusOk && status != Ds2Telegram.StatusBusy)
+                throw new InvalidOperationException(
+                    "The transmission refused a flash status request, so it is not open for " +
+                    "programming. Nothing was erased. Reply: " + Ds2Telegram.ToHex(reply, 12));
         }
 
         private void Erase(int address, CancellationToken cancel) =>
