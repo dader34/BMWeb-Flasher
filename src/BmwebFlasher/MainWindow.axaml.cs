@@ -451,7 +451,10 @@ namespace BmwebFlasher
             LoadTcuCal.IsEnabled = false;
             WriteTcuCal.IsEnabled = false;
             TestFullRead.IsEnabled = false;
+            LoadTcuProgram.IsEnabled = false;
+            WriteTcuProgram.IsEnabled = false;
             _tcuCalToWrite = null;
+            _tcuProgramToWrite = null;
             _tcuSgbd = null;
             _tcuIdentSwNr = _tcuIdentBmwNr = null;
             RefreshNoUpshiftGate();
@@ -921,6 +924,12 @@ namespace BmwebFlasher
         /// <summary>The calibration picked for a write, already checksum-corrected.</summary>
         private byte[] _tcuCalToWrite;
 
+        /// <summary>The program region queued for writing, checksum corrected.</summary>
+        private byte[] _tcuProgramToWrite;
+
+        /// <summary>Which of the four program sectors an aborted write had erased.</summary>
+        private int _tcuProgramSectorsErased;
+
 
         /// <summary>Whether the last write got as far as erasing.</summary>
         private bool _tcuWriteErased;
@@ -1176,6 +1185,314 @@ namespace BmwebFlasher
             }
         }
 
+        // --- Program write ----------------------------------------------------
+
+        /// <summary>
+        /// The two-digit software release a program image declares, from the
+        /// "G2210_0090C0" string in its tail. Null when there is none.
+        /// </summary>
+        private static string ProgramRelease(byte[] program)
+        {
+            string tail = System.Text.Encoding.ASCII.GetString(
+                program, program.Length - 0x100, 0x100);
+            var m = System.Text.RegularExpressions.Regex.Match(tail, @"G2210_00(\d\d)C0");
+            return m.Success ? m.Groups[1].Value : null;
+        }
+
+        /// <summary>Whether an image carries the subcode-8 read routine.</summary>
+        private static bool ProgramHasReadPatch(byte[] program)
+        {
+            // The routine's first instruction: cmpb RL3,#8 at program 0x0D34C.
+            const int at = 0x0AD34C - Gs20ProgramWriter.ProgramAddress;
+            return program[at] == 0x47 && program[at + 1] == 0xF6 && program[at + 2] == 0x08;
+        }
+
+        private async void LoadTcuProgram_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+                {
+                    Title = "Load TCU Program",
+                    AllowMultiple = false,
+                    FileTypeFilter = new[]
+                    {
+                        new FilePickerFileType("Program")
+                            { Patterns = new[] { "*.bin", "*.0PA", "*.0pa" } },
+                        new FilePickerFileType("All Files") { Patterns = new[] { "*" } }
+                    }
+                });
+                var picked = files?.FirstOrDefault();
+                string path = picked?.TryGetLocalPath();
+                picked?.Dispose();
+                if (string.IsNullOrEmpty(path)) return;
+
+                byte[] program;
+                string origin;
+                if (Gs20DatenFile.IsProgramFile(path))
+                {
+                    program = Gs20DatenFile.DecodeProgram(path);
+                    origin = ".0PA";
+                }
+                else
+                {
+                    byte[] raw = File.ReadAllBytes(path);
+                    if (raw.Length == 0x80000)
+                    {
+                        // A full 512 KB image: take the program region out of it.
+                        program = raw.Skip(Gs20ProgramWriter.ProgramAddress - 0x080000)
+                                     .Take(Gs20ProgramWriter.ProgramLength).ToArray();
+                        origin = "512 KB image";
+                    }
+                    else if (raw.Length == Gs20ProgramWriter.ProgramLength)
+                    {
+                        program = raw;
+                        origin = "256 KB program";
+                    }
+                    else
+                    {
+                        _tcuProgramToWrite = null;
+                        WriteTcuProgram.IsEnabled = false;
+                        SetStatus("A GS20 program is 256 KB (or a 512 KB full image); that file is 0x" +
+                                  raw.Length.ToString("X") + " bytes");
+                        return;
+                    }
+                }
+
+                string release = ProgramRelease(program);
+                if (release == null)
+                {
+                    _tcuProgramToWrite = null;
+                    WriteTcuProgram.IsEnabled = false;
+                    await MessageAsync(
+                        "This file carries no G2210 version string where a GS20 program " +
+                        "keeps one, so it is not being loaded. A program written from the " +
+                        "wrong file cannot be recovered over the diagnostic port.",
+                        "Load Program");
+                    return;
+                }
+
+                ushort stored = Gs20ProgramChecksum.Stored(program);
+                _tcuProgramToWrite = Gs20ProgramChecksum.Corrected(program, out ushort checksum);
+                WriteTcuProgram.IsEnabled = string.Equals(_tcuSgbd, "gs20.prg",
+                                                          StringComparison.OrdinalIgnoreCase);
+
+                SetStatus("Loaded " + Path.GetFileName(path) + " [" + origin + "] release " +
+                          release + (ProgramHasReadPatch(_tcuProgramToWrite) ? ", read patch present" : ", stock") +
+                          (stored == checksum ? ", checksum already correct"
+                                              : ", checksum corrected 0x" + stored.ToString("X4") +
+                                                " -> 0x" + checksum.ToString("X4")));
+            }
+            catch (Exception ex)
+            {
+                _tcuProgramToWrite = null;
+                WriteTcuProgram.IsEnabled = false;
+                SetStatus("Could not load that program: " + ex.Message);
+                await MessageAsync(Describe(ex), "Load Program");
+            }
+        }
+
+        /// <summary>
+        /// Writes the program region. Structured like the DME's full-program
+        /// flash: security first, everything prepared before the first erase,
+        /// each phase logged, a verification pass, and a re-identify after.
+        ///
+        /// What is different is the failure mode. The DS2 handler lives in the
+        /// region being erased, so a module left half-written does not answer
+        /// at all afterwards; recovery is the boot-strap loader, not another
+        /// flash. Every gate in front of the erase is there because of that.
+        /// </summary>
+        private async void WriteTcuProgram_Click(object sender, RoutedEventArgs e)
+        {
+            if (_tcuProgramToWrite == null) { SetStatus("Load a program first"); return; }
+
+            string portProblem = CheckPort(Global.Port);
+            if (portProblem != null)
+            {
+                SetStatus("Port unavailable");
+                await MessageAsync(portProblem, "Write Program");
+                return;
+            }
+
+            // The software level has to agree. The read patch's hook is a
+            // retargeted jump at a fixed address; on another release that
+            // address is the middle of some other instruction.
+            string release = ProgramRelease(_tcuProgramToWrite);
+            string reported = (_tcuIdentSwNr ?? string.Empty).Trim().TrimStart('0');
+            if (!string.Equals(release, reported, StringComparison.Ordinal))
+            {
+                if (!await ConfirmWithAcknowledgementAsync(
+                        "This program is release " + release + "; the transmission reports " +
+                        (reported.Length == 0 ? "no software level" : "release " + reported) + ".\n\n" +
+                        "The calibration already on the transmission was paired with its " +
+                        "current program. Changing the program underneath it is what a " +
+                        "WinKFP update does -- but if this image carries the read patch, " +
+                        "its hook lands inside another instruction on a different release " +
+                        "and the module will not run.",
+                        "I understand the software levels differ, and I accept the risk.",
+                        "Program does not match"))
+                {
+                    SetStatus("Write cancelled: the program does not match the transmission");
+                    return;
+                }
+            }
+
+            if (!await ConfirmWithAcknowledgementAsync(
+                    "This erases the four program sectors (0x0A0000-0x0DFFFF) and reprograms them.\n\n" +
+                    "The transmission's diagnostic handler lives in that region. If this write is " +
+                    "interrupted -- power, cable, anything -- the module will not answer over the " +
+                    "diagnostic port afterwards and cannot be reflashed with this or any other " +
+                    "tool. Recovery is the boot-strap loader on the bench.\n\n" +
+                    "The calibration and boot block are not touched.\n\n" +
+                    "Use a bench supply or a charger. Do not switch off or unplug until it reports done.",
+                    "I understand a failed program write is not recoverable over the diagnostic port.",
+                    "Write Program"))
+            {
+                return;
+            }
+
+            ReadTcuCal.IsEnabled = LoadTcuCal.IsEnabled = WriteTcuCal.IsEnabled = false;
+            TestFullRead.IsEnabled = LoadTcuProgram.IsEnabled = WriteTcuProgram.IsEnabled = false;
+            UpdateProgressBar(0);
+
+            string logPath = null;
+            _tcuProgramSectorsErased = 0;
+            bool verified = false;
+            string verifyNote = string.Empty;
+            try
+            {
+                ShowProgressAsFlashing(true);
+                using (FlashLog.Session("tcu-program-write", out logPath))
+                {
+                    byte[] image = _tcuProgramToWrite;
+                    FlashLog.Note("TCU " + _tcuSgbd + " / ident " + DescribeIdentifiedSoftware() +
+                                  " / program release " + release +
+                                  " / checksum 0x" + Gs20ProgramChecksum.Stored(image).ToString("X4") +
+                                  (ProgramHasReadPatch(image) ? " / read patch present" : " / stock"));
+
+                    bool fastMode = TcuFastMode.IsChecked == true;
+                    var progress = new Progress<int>(p =>
+                    {
+                        UpdateProgressBar((uint)p);
+                        SetStatus("Writing program " + p + "%");
+                    });
+
+                    await Task.Run(() =>
+                    {
+                        using (SleepBlocker.Acquire())
+                        using (var link = new Ds2SerialLink(Global.Port, FlashLog.Note))
+                        {
+                            var session = new Gs20CalWriter(link, FlashLog.Note);
+                            var writer = new Gs20ProgramWriter(link, FlashLog.Note);
+
+                            FlashLog.Note("PHASE: session");
+                            session.OpenSession();
+                            FlashLog.Note("session open");
+
+                            // Unlike the calibration path this one insists on a
+                            // reading: a brown-out mid-write is the one failure
+                            // that cannot be undone from here.
+                            decimal volts = session.ReadBatteryVolts();
+                            FlashLog.Note("battery " + volts.ToString("0.0") + " V");
+                            if (volts < 11.5m)
+                                throw new InvalidOperationException(
+                                    "Supply is " + volts.ToString("0.0") + " V. A program write needs a " +
+                                    "steady supply above 11.5 V; put a charger or bench supply on it.");
+
+                            FlashLog.Note("PHASE: unlock");
+                            session.Unlock();
+                            FlashLog.Note("unlocked");
+
+                            if (fastMode)
+                            {
+                                try { link.SwitchBaud(Ds2SerialLink.FastBaud); FlashLog.Note("baud " + link.Baud); }
+                                catch (Exception ex) { FlashLog.Note("staying at " + link.Baud + " baud: " + ex.Message); }
+                            }
+
+                            try
+                            {
+                                FlashLog.Note("PHASE: erase 4 sectors + write 0x40000 (brick-capable step)");
+                                writer.Write(image, progress);
+
+                                // Verify: read the region back through the
+                                // patched firmware, if the image carries it.
+                                // A stock image cannot be read back over DS2
+                                // at all, and that is said rather than skipped.
+                                FlashLog.Note("PHASE: verify");
+                                if (ProgramHasReadPatch(image))
+                                {
+                                    var reader = new Gs20FullReader(link, FlashLog.Note);
+                                    string problem = reader.Probe();
+                                    if (problem != null)
+                                        throw new InvalidOperationException(
+                                            "The program was written and committed, but the read-back " +
+                                            "probe failed: " + problem);
+                                    byte[] back = reader.Read(Gs20ProgramWriter.ProgramAddress,
+                                                              Gs20ProgramWriter.ProgramLength);
+                                    int bad = 0; int first = -1;
+                                    for (int i = 0; i < back.Length; i++)
+                                        if (back[i] != image[i]) { if (first < 0) first = i; bad++; }
+                                    if (bad > 0)
+                                        throw new InvalidOperationException(
+                                            "Read-back differs from the image in " + bad + " bytes, " +
+                                            "first at 0x" + (Gs20ProgramWriter.ProgramAddress + first).ToString("X6") +
+                                            ". The write did not land as sent.");
+                                    verified = true;
+                                    FlashLog.Note("RESULT: read-back matches, 0x40000 bytes");
+                                }
+                                else
+                                {
+                                    verifyNote = "\n\nThis image is a stock program, so it could not be read " +
+                                                 "back over the diagnostic port to verify.";
+                                    FlashLog.Note("RESULT: written; stock image, no read-back possible");
+                                }
+                            }
+                            finally
+                            {
+                                _tcuProgramSectorsErased = writer.ErasedSectors.Count;
+                                try { link.SwitchBaud(Ds2SerialLink.DefaultBaud); } catch (Exception) { }
+                                session.CloseSession();
+                            }
+                        }
+                    });
+
+                    // Re-identify, as the DME flash does: the proof a program
+                    // write worked is that the module still says who it is.
+                    FlashLog.Note("PHASE: re-identify");
+                    SetStatus("Program written. Identifying...");
+                    await MessageAsync(
+                        "The program was written and the transmission confirmed it" +
+                        (verified ? ", and the read-back matches byte for byte." : ".") +
+                        verifyNote + "\n\nCycle the ignition, then identify the transmission " +
+                        "and check for stored faults.",
+                        "Write Program");
+                }
+            }
+            catch (Exception ex)
+            {
+                SetStatus("Program write failed: " + ex.Message);
+                string aftermath = _tcuProgramSectorsErased == 0
+                    ? "\n\nNothing was erased or written, so the program on the transmission " +
+                      "is unchanged."
+                    : "\n\n" + _tcuProgramSectorsErased + " of 4 program sectors were erased before " +
+                      "this failed. If the transmission no longer answers, it will not answer " +
+                      "any flasher either: recovery is the boot-strap loader on the bench. " +
+                      "The boot block and calibration are intact.";
+                await MessageAsync(Describe(ex) + aftermath + DescribeLog(logPath), "Write Program");
+            }
+            finally
+            {
+                ShowProgressAsFlashing(false);
+                UpdateProgressBar(0);
+                bool isGs20 = string.Equals(_tcuSgbd, "gs20.prg", StringComparison.OrdinalIgnoreCase);
+                ReadTcuCal.IsEnabled = true;
+                LoadTcuCal.IsEnabled = isGs20;
+                WriteTcuCal.IsEnabled = _tcuCalToWrite != null;
+                TestFullRead.IsEnabled = LoadTcuProgram.IsEnabled = isGs20;
+                WriteTcuProgram.IsEnabled = isGs20 && _tcuProgramToWrite != null;
+            }
+        }
+
         /// <summary>
         /// Erases and reprograms the transmission calibration over raw DS2.
         ///
@@ -1370,6 +1687,8 @@ namespace BmwebFlasher
                 WriteTcuCal.IsEnabled = _tcuCalToWrite != null;
                 TestFullRead.IsEnabled = string.Equals(_tcuSgbd, "gs20.prg",
                                                        StringComparison.OrdinalIgnoreCase);
+                LoadTcuProgram.IsEnabled = TestFullRead.IsEnabled;
+                WriteTcuProgram.IsEnabled = TestFullRead.IsEnabled && _tcuProgramToWrite != null;
             }
         }
 
@@ -1424,6 +1743,8 @@ namespace BmwebFlasher
                 // Subcode 8 is a GS20 patch; the command means nothing
                 // anywhere else.
                 TestFullRead.IsEnabled = isGs20;
+                LoadTcuProgram.IsEnabled = isGs20;
+                WriteTcuProgram.IsEnabled = isGs20 && _tcuProgramToWrite != null;
                 if (!isGs20)
                 {
                     _tcuCalToWrite = null;

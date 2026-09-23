@@ -89,10 +89,30 @@ namespace BmwebFlasher
         /// result does not cover the whole calibration. Refusing here is the
         /// point: a partially decoded calibration looks valid.
         /// </exception>
-        public static byte[] Decode(string path)
+        public static byte[] Decode(string path) =>
+            Decode(path, CalAddress, Gs20Checksum.CalLength);
+
+        /// <summary>Where the program lives in the module's address space.</summary>
+        public const int ProgramAddress = 0x0A0000;
+
+        /// <summary>Whether a path looks like a program Daten file (.0PA).</summary>
+        public static bool IsProgramFile(string path) =>
+            path != null &&
+            Path.GetExtension(path).Equals(".0PA", StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Decodes a <c>.0PA</c> program file to the 256 KB program region.
+        /// Same format as the calibration file, addressed at 0x0A0000; each
+        /// 64 KB page ends in a type-0x10 record, which is why earlier extracts
+        /// of these files came out 32 bytes short per page.
+        /// </summary>
+        public static byte[] DecodeProgram(string path) =>
+            Decode(path, ProgramAddress, Gs20ProgramChecksum.ProgramLength);
+
+        private static byte[] Decode(string path, int region, int size)
         {
-            var image = new byte[Gs20Checksum.CalLength];
-            var covered = new bool[Gs20Checksum.CalLength];
+            var image = new byte[size];
+            var covered = new bool[size];
             int linearBase = 0, segmentBase = 0, lineNumber = 0;
 
             foreach (string raw in File.ReadLines(path))
@@ -123,7 +143,7 @@ namespace BmwebFlasher
                         int start = linearBase + segmentBase + address;
                         for (int i = 0; i < length; i++)
                         {
-                            int offset = start + i - CalAddress;
+                            int offset = start + i - region;
                             if (offset < 0 || offset >= image.Length) continue;
                             image[offset] = record[4 + i];
                             covered[offset] = true;
