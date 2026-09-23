@@ -891,7 +891,9 @@ namespace BmwebFlasher
                     FileTypeFilter = CalibrationFilters()
                 });
 
-                string path = files?.FirstOrDefault()?.TryGetLocalPath();
+                var picked = files?.FirstOrDefault();
+                string path = picked?.TryGetLocalPath();
+                picked?.Dispose();
                 if (string.IsNullOrEmpty(path))
                     return;
 
@@ -2637,9 +2639,15 @@ namespace BmwebFlasher
                     FileTypeChoices = BinaryFilters()
                 });
 
-                string path = file?.TryGetLocalPath();
-                if (!string.IsNullOrEmpty(path))
-                    File.WriteAllBytes(path, data);
+                // Dispose the handle: on Windows an undisposed picker result
+                // keeps a COM reference alive, and the process then refuses to
+                // exit when the window is closed.
+                using (file)
+                {
+                    string path = file?.TryGetLocalPath();
+                    if (!string.IsNullOrEmpty(path))
+                        File.WriteAllBytes(path, data);
+                }
             }
             catch (Exception ex)
             {

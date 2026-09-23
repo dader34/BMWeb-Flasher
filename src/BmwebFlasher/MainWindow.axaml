@@ -2,7 +2,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:BmwebFlasher"
         x:Class="BmwebFlasher.MainWindow"
-        Width="640" Height="560" MinWidth="620" MinHeight="540"
+        Width="640" Height="640" MinWidth="620" MinHeight="620"
         Title="BMWeb Flasher">
   <!-- The WPF original positioned every control with absolute Margins inside a
        Grid. That does not survive a different text renderer, so the port uses
@@ -87,15 +87,16 @@
                 <CheckBox x:Name="TcuFastMode" Content="Fast mode" IsChecked="True"
                           ToolTip.Tip="Ask the transmission to talk at 125000 baud instead of 9600. Falls back on its own if the transmission will not."/>
                 <TextBlock Text="Take a backup read first and keep the engine off with a charger on."
-                           Opacity="0.6" FontSize="12" TextWrapping="Wrap"/>
+                           Opacity="0.6" FontSize="11" TextWrapping="Wrap"/>
 
-                <!-- Subcode-8 full read. Stock firmware gates 06 to the
-                     calibration; a module carrying the patched program answers
-                     an extra subcode that reaches any address. Separated from
-                     the controls above because it only works on a patched
-                     module, and the routine has never run on real hardware. -->
-                <Separator Margin="0,6,0,2"/>
-                <TextBlock Text="Patched firmware only" FontSize="12" Opacity="0.6"/>
+                <!-- Subcode-8 read. Stock firmware gates 06 to the calibration;
+                     a module carrying the patched program answers an extra
+                     subcode that reaches any address. Kept visible without
+                     scrolling: the region picker and its button belong
+                     together, and a picker with its button below the fold
+                     reads as broken. -->
+                <Separator Margin="0,4,0,0"/>
+                <TextBlock Text="Patched firmware only" FontSize="11" Opacity="0.6"/>
                 <ComboBox x:Name="TestFullReadRegion" HorizontalAlignment="Stretch"
                           SelectedIndex="0"
                           ToolTip.Tip="Which region to read with subcode 8.">
@@ -103,7 +104,7 @@
                   <ComboBoxItem Content="Program (0x0A0000, 256 KB)"/>
                   <ComboBoxItem Content="Everything (0x080000, 512 KB)"/>
                 </ComboBox>
-                <Button x:Name="TestFullRead" Content="Test Full Read" HorizontalAlignment="Stretch"
+                <Button x:Name="TestFullRead" Content="Read Selected Region" HorizontalAlignment="Stretch"
                         Click="TestFullRead_Click" IsEnabled="False"
                         ToolTip.Tip="Read outside the calibration using the patched program's subcode-8 read. A stock module answers B0 and nothing is written to the module either way."/>
               </StackPanel>
