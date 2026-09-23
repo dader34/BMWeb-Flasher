@@ -160,7 +160,10 @@ Verified on a real E46 (325i, MS45.1 + GS20):
 - DME + TCU fault read / clear / export.
 - Serial + security-access + memory read/write over a macOS FTDI cable.
 - **Test Full Read** against a patched GS20: a tester's module identified
-  correctly and returned a partial read of a region outside the calibration.
+  correctly, and a full 512 KB read came back byte-for-byte correct against a
+  known image.
+- **.0DA calibration loading**: BMW's own Daten files are decoded to the raw
+  64 KB image, verified against two calibrations read back off real modules.
 
 Not yet exercised on a car through this port: the **full-program / EWS flash**
 path (the brick-capable one). Treat it as unproven and keep a full backup.

@@ -152,6 +152,62 @@ namespace BmwebFlasher
         }
 
         /// <summary>
+        /// A dialog offering several named choices, for the cases a yes/no
+        /// confirmation cannot express. Returns the index of the button the
+        /// user pressed, or -1 when the dialog was dismissed.
+        /// </summary>
+        private async Task<int> ChooseAsync(string message, string title,
+                                            params string[] choices)
+        {
+            var dialog = new Window
+            {
+                Title = title,
+                Width = 520,
+                SizeToContent = SizeToContent.Height,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                CanResize = false
+            };
+
+            int result = -1;
+            var buttons = new StackPanel
+            {
+                Orientation = Avalonia.Layout.Orientation.Horizontal,
+                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
+                Spacing = 8
+            };
+
+            var cancel = new Button { Content = "Cancel", MinWidth = 90, IsCancel = true };
+            cancel.Click += (_, _) => { result = -1; dialog.Close(); };
+            buttons.Children.Add(cancel);
+
+            for (int i = 0; i < choices.Length; i++)
+            {
+                int index = i;
+                var button = new Button { Content = choices[i], MinWidth = 90 };
+                button.Click += (_, _) => { result = index; dialog.Close(); };
+                buttons.Children.Add(button);
+            }
+
+            dialog.Content = new StackPanel
+            {
+                Margin = new Avalonia.Thickness(20),
+                Spacing = 16,
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = message,
+                        TextWrapping = Avalonia.Media.TextWrapping.Wrap
+                    },
+                    buttons
+                }
+            };
+
+            await dialog.ShowDialog(this);
+            return result;
+        }
+
+        /// <summary>
         /// A confirmation that will not proceed until the warning is ticked.
         /// Used where the risk is real enough that clicking through on muscle
         /// memory should not be possible.
@@ -813,6 +869,7 @@ namespace BmwebFlasher
         /// <summary>The calibration picked for a write, already checksum-corrected.</summary>
         private byte[] _tcuCalToWrite;
 
+
         /// <summary>Whether the last write got as far as erasing.</summary>
         private bool _tcuWriteErased;
 
@@ -831,20 +888,103 @@ namespace BmwebFlasher
                 {
                     Title = "Load TCU Calibration",
                     AllowMultiple = false,
-                    FileTypeFilter = BinaryFilters()
+                    FileTypeFilter = CalibrationFilters()
                 });
 
                 string path = files?.FirstOrDefault()?.TryGetLocalPath();
                 if (string.IsNullOrEmpty(path))
                     return;
 
-                byte[] cal = File.ReadAllBytes(path);
+                // A .0DA is BMW's own Daten file: Intel HEX addressed at
+                // 0x090000, with a final block in a non-standard record type.
+                // Decoding it here means a calibration can be flashed straight
+                // out of SP-Daten.
+                byte[] cal;
+                string datenNote = string.Empty;
+                if (Gs20DatenFile.IsDatenFile(path))
+                {
+                    try
+                    {
+                        cal = Gs20DatenFile.Decode(path);
+                    }
+                    catch (Exception ex)
+                    {
+                        _tcuCalToWrite = null;
+                        WriteTcuCal.IsEnabled = false;
+                        SetStatus("Could not read that Daten file: " + ex.Message);
+                        await MessageAsync(
+                            "This file could not be decoded, so nothing was loaded.\n\n" +
+                            ex.Message, "Load Calibration");
+                        return;
+                    }
+
+                    string vehicle = Gs20DatenFile.ReadVehicle(path);
+                    string reference = Gs20DatenFile.ReadReference(path);
+
+                    // A .0DA is BMW's own format, not something the module can
+                    // take directly, so say what it turned out to be and let
+                    // the choice of what to do with it be explicit.
+                    int choice = await ChooseAsync(
+                        Path.GetFileName(path) + " is a BMW Daten file and has been " +
+                        "converted to a 64 KB calibration.\n\n" +
+                        (reference != null ? "Calibration:  " + reference + "\n" : string.Empty) +
+                        (vehicle != null ? "Vehicle:      " + vehicle + "\n" : string.Empty) +
+                        "\nWhat would you like to do with it?",
+                        "Load Calibration",
+                        "Save as .bin", "Use for flashing", "Save and use");
+
+                    if (choice < 0)
+                    {
+                        SetStatus("Nothing loaded");
+                        return;
+                    }
+
+                    if (choice == 0 || choice == 2)          // save
+                    {
+                        await SaveDumpAsync(
+                            Gs20Checksum.Correct(cal),
+                            Path.GetFileNameWithoutExtension(path) + "_converted");
+                    }
+
+                    if (choice == 0)                          // save only
+                    {
+                        SetStatus("Converted " + Path.GetFileName(path) +
+                                  (reference != null ? " (" + reference + ")" : string.Empty));
+                        return;
+                    }
+
+                    datenNote = " [.0DA" +
+                                (vehicle != null ? ", " + vehicle : string.Empty) + "]";
+                }
+                else
+                {
+                    cal = File.ReadAllBytes(path);
+                }
+
                 if (cal.Length != Gs20Checksum.CalLength)
                 {
                     _tcuCalToWrite = null;
                     WriteTcuCal.IsEnabled = false;
                     SetStatus("A GS20 calibration is 64 KB; that file is 0x" +
                               cal.Length.ToString("X") + " bytes");
+                    return;
+                }
+
+                // Every GS20 calibration ends C7 A3 8C 44. One that does not is
+                // written telegram by telegram without complaint and then
+                // refused at the commit, which leaves the transmission
+                // declining further writes until it is power-cycled.
+                if (!Gs20DatenFile.HasTrailer(cal))
+                {
+                    _tcuCalToWrite = null;
+                    WriteTcuCal.IsEnabled = false;
+                    SetStatus("That calibration is missing its trailer; not loaded");
+                    await MessageAsync(
+                        "This file does not end with the four bytes every GS20 " +
+                        "calibration carries (C7 A3 8C 44).\n\nA calibration like " +
+                        "this is written without complaint and then refused when " +
+                        "the transmission validates it, so it has not been loaded.",
+                        "Load Calibration");
                     return;
                 }
 
@@ -859,7 +999,7 @@ namespace BmwebFlasher
                 RefreshNoUpshiftGate();
 
                 string version = Gs20Checksum.ReadVersion(_tcuCalToWrite);
-                SetStatus("Loaded " + Path.GetFileName(path) +
+                SetStatus("Loaded " + Path.GetFileName(path) + datenNote +
                           (version != null ? " (" + version + ")" : string.Empty) +
                           (stored == corrected
                               ? ", checksum already correct"
@@ -2316,6 +2456,20 @@ namespace BmwebFlasher
         {
             new FilePickerFileType("Binary") { Patterns = new[] { "*.bin" } },
             new FilePickerFileType("Original File") { Patterns = new[] { "*.ori" } },
+            new FilePickerFileType("All Files") { Patterns = new[] { "*" } }
+        };
+
+        /// <summary>
+        /// The TCU calibration picker also takes BMW's own .0DA Daten files,
+        /// which are decoded to the raw image on the way in, so a calibration
+        /// can be flashed straight out of SP-Daten without converting it first.
+        /// </summary>
+        private static FilePickerFileType[] CalibrationFilters() => new[]
+        {
+            new FilePickerFileType("Calibration")
+                { Patterns = new[] { "*.bin", "*.0DA", "*.0da" } },
+            new FilePickerFileType("Binary") { Patterns = new[] { "*.bin" } },
+            new FilePickerFileType("BMW Daten file") { Patterns = new[] { "*.0DA", "*.0da" } },
             new FilePickerFileType("All Files") { Patterns = new[] { "*" } }
         };
 
