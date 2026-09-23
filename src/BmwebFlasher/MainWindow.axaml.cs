@@ -342,6 +342,7 @@ namespace BmwebFlasher
             ReadTcuCal.IsEnabled = false;
             LoadTcuCal.IsEnabled = false;
             WriteTcuCal.IsEnabled = false;
+            TestFullRead.IsEnabled = false;
             _tcuCalToWrite = null;
             _tcuSgbd = null;
             _tcuIdentSwNr = _tcuIdentBmwNr = null;
@@ -487,6 +488,229 @@ namespace BmwebFlasher
             finally
             {
                 ReadTcuCal.IsEnabled = true;
+            }
+        }
+
+        /// <summary>
+        /// Reads the boot block, the program or the whole image using the
+        /// patched firmware's subcode-8 read.
+        ///
+        /// This is diagnostic tooling, not part of any flash flow: nothing is
+        /// written to the module and a failure costs only time. It exists
+        /// because stock firmware gates the 06 read to the calibration, so
+        /// until a module carries the patched program there is no way to see
+        /// what is actually in its boot block or program area.
+        ///
+        /// A probe runs first so an unpatched module is reported as such
+        /// rather than failing 4000 chunks in a row.
+        /// </summary>
+        private async void TestFullRead_Click(object sender, RoutedEventArgs e)
+        {
+            string portProblem = CheckPort(Global.Port);
+            if (portProblem != null)
+            {
+                SetStatus("Port unavailable");
+                await MessageAsync(portProblem, "Test Full Read");
+                return;
+            }
+
+            if (string.IsNullOrEmpty(_tcuSgbd))
+            {
+                SetStatus("Identify the TCU first");
+                return;
+            }
+
+            int region = TestFullReadRegion.SelectedIndex;
+            int address, length, minutesAt9600;
+            string label;
+            switch (region)
+            {
+                case 1:
+                    address = Gs20FullReader.ProgramAddress;
+                    length = Gs20FullReader.ProgramLength;
+                    label = "program";
+                    break;
+                case 2:
+                    address = Gs20FullReader.FullAddress;
+                    length = Gs20FullReader.FullLength;
+                    label = "full";
+                    break;
+                default:
+                    address = Gs20FullReader.BootAddress;
+                    length = Gs20FullReader.BootLength;
+                    label = "boot";
+                    break;
+            }
+
+            // Roughly: one chunk per telegram, both directions, plus framing.
+            minutesAt9600 = (int)Math.Ceiling(
+                length / (double)Gs20FullReader.ReadChunk * 0.28 / 60.0);
+
+            bool fast = TcuFastMode.IsChecked == true;
+            if (!await ConfirmAsync(
+                    "This uses the subcode-8 read, which only exists on a module " +
+                    "flashed with the patched program. A stock module will answer " +
+                    "B0 and nothing will happen.\n\n" +
+                    "Reading 0x" + length.ToString("X") + " bytes from 0x" +
+                    address.ToString("X6") + "." +
+                    (fast ? "" : " At 9600 baud this takes roughly " +
+                                 minutesAt9600 + " minutes; turn on fast mode to " +
+                                 "shorten it.") +
+                    "\n\nNothing is written to the module.",
+                    "Test Full Read"))
+                return;
+
+            TestFullRead.IsEnabled = false;
+            ReadTcuCal.IsEnabled = false;
+            UpdateProgressBar(0);
+
+            // Every telegram goes to a session log. This read talks to a
+            // routine that only exists on patched modules, so when something
+            // does go wrong the wire trace is the only way to tell a bad
+            // reply apart from a bad request.
+            string logPath = null;
+            try
+            {
+                using (FlashLog.Session("tcu-full-read", out logPath))
+                {
+                    FlashLog.Note("TCU " + _tcuSgbd + " / subcode-8 read of the " + label +
+                                  " region: 0x" + length.ToString("X") + " bytes from 0x" +
+                                  address.ToString("X6") +
+                                  " / fast mode " + (fast ? "on" : "off"));
+
+                    _tcuFastMode = fast;
+                    byte[] image = await Task.Run(() => ReadGs20Region(address, length));
+                    UpdateProgressBar(0);
+                    if (image == null || image.Length == 0)
+                    {
+                        FlashLog.Note("RESULT: no data");
+                        SetStatus("Full read returned no data");
+                        await MessageAsync(
+                            "The read finished without returning any data." +
+                            DescribeLog(logPath), "Test Full Read");
+                        return;
+                    }
+
+                    string verdict = DescribeFullRead(address, image);
+                    FlashLog.Note("RESULT: 0x" + image.Length.ToString("X") + " bytes" +
+                                  (verdict.Length > 0 ? " --" + verdict : string.Empty));
+
+                    await SaveDumpAsync(image, "TCU_" + label + "_" +
+                                               address.ToString("X6") + "_" +
+                                               DateTime.Now.ToString("yyyyMMdd_HHmmss"));
+                    SetStatus("Read 0x" + image.Length.ToString("X") + " bytes from 0x" +
+                              address.ToString("X6") + verdict);
+
+                    // A damaged boot block is the finding this feature exists
+                    // to surface, so it gets said out loud rather than sitting
+                    // in the status line.
+                    if (verdict.Contains("WARNING") || verdict.Contains("warning"))
+                        await MessageAsync(
+                            "The read completed, but the contents look wrong:" +
+                            verdict.Replace(" -- ", "\n\n") + DescribeLog(logPath),
+                            "Test Full Read");
+                }
+            }
+            catch (Exception ex)
+            {
+                UpdateProgressBar(0);
+                FlashLog.Note("FAILED: " + ex.Message);
+                SetStatus("Full read failed: " + ex.Message);
+                await MessageAsync(Describe(ex) + DescribeLog(logPath), "Test Full Read");
+            }
+            finally
+            {
+                TestFullRead.IsEnabled = true;
+                ReadTcuCal.IsEnabled = true;
+            }
+        }
+
+        /// <summary>
+        /// A pointer to the session log, for the end of an error dialog. The
+        /// trace is the useful part when a read or write goes wrong, and it is
+        /// no use to anyone who cannot find the file.
+        /// </summary>
+        private static string DescribeLog(string logPath)
+        {
+            if (string.IsNullOrEmpty(logPath)) return string.Empty;
+            return "\n\nA telegram trace was written to:\n" + logPath;
+        }
+
+        /// <summary>
+        /// Says something useful about what came back. A boot block read is
+        /// the whole point of this feature -- it is the region a bad flash
+        /// destroys -- so the reset vectors are worth checking on the spot.
+        /// </summary>
+        private static string DescribeFullRead(int address, byte[] image)
+        {
+            if (address != Gs20FullReader.BootAddress || image.Length < 0x10)
+                return string.Empty;
+
+            bool vectors = image[0x00] == 0xFA && image[0x04] == 0xFA &&
+                           image[0x08] == 0xFA && image[0x0C] == 0xFA;
+            int blank = 0;
+            foreach (byte b in image) if (b == 0x00 || b == 0xFF) blank++;
+
+            if (!vectors)
+                return " -- WARNING: the reset vectors are not JMPS (0xFA). " +
+                       "This boot block looks damaged.";
+            if (blank > image.Length / 2)
+                return " -- warning: the vectors are intact but " + blank +
+                       " of " + image.Length + " bytes are blank.";
+            return " -- boot vectors intact (FA at 0x00/04/08/0C).";
+        }
+
+        /// <summary>
+        /// The subcode-8 read, over the same raw DS2 link the calibration read
+        /// uses, including the optional faster line rate.
+        /// </summary>
+        private byte[] ReadGs20Region(int address, int length)
+        {
+            using (SleepBlocker.Acquire())
+            using (var link = new Ds2SerialLink(Global.Port, FlashLog.Note))
+            {
+                if (_tcuFastMode)
+                {
+                    try
+                    {
+                        link.SwitchBaud(Ds2SerialLink.FastBaud);
+                        FlashLog.Note("baud " + link.Baud);
+                    }
+                    catch (Exception ex)
+                    {
+                        FlashLog.Note("staying at " + link.Baud + " baud: " + ex.Message);
+                    }
+                }
+
+                try
+                {
+                    var reader = new Gs20FullReader(link, note =>
+                    {
+                        FlashLog.Note(note);
+                        SetStatus(note);
+                    });
+
+                    // Fail early and legibly on a module without the patch.
+                    FlashLog.Note("PHASE: probe for the subcode-8 routine");
+                    string problem = reader.Probe();
+                    if (problem != null)
+                        throw new InvalidOperationException(problem);
+
+                    FlashLog.Note("PHASE: read 0x" + length.ToString("X") +
+                                  " bytes from 0x" + address.ToString("X6"));
+
+                    var progress = new Progress<int>(p =>
+                    {
+                        UpdateProgressBar((uint)p);
+                        SetStatus(p + "%");
+                    });
+                    return reader.Read(address, length, progress);
+                }
+                finally
+                {
+                    try { link.SwitchBaud(Ds2SerialLink.DefaultBaud); }
+                    catch (Exception) { }
+                }
             }
         }
 
@@ -813,12 +1037,14 @@ namespace BmwebFlasher
 
             ReadTcuCal.IsEnabled = LoadTcuCal.IsEnabled = false;
             WriteTcuCal.IsEnabled = false;
+            TestFullRead.IsEnabled = false;
             UpdateProgressBar(0);
 
+            string calLogPath = null;
             try
             {
                 ShowProgressAsFlashing(true);
-                using (FlashLog.Session("tcu-cal-write", out _))
+                using (FlashLog.Session("tcu-cal-write", out calLogPath))
                 {
                     FlashLog.Note("TCU " + _tcuSgbd + " / cal 0x" +
                                   Gs20CalWriter.CalAddress.ToString("X6") + " / checksum 0x" +
@@ -931,7 +1157,8 @@ namespace BmwebFlasher
                     : "\n\nNothing was erased or written, so the calibration on the transmission " +
                       "is unchanged.";
 
-                await MessageAsync(Describe(ex) + aftermath, "Write Calibration");
+                await MessageAsync(Describe(ex) + aftermath + DescribeLog(calLogPath),
+                                   "Write Calibration");
             }
             finally
             {
@@ -941,6 +1168,8 @@ namespace BmwebFlasher
                 LoadTcuCal.IsEnabled = string.Equals(_tcuSgbd, "gs20.prg",
                                                      StringComparison.OrdinalIgnoreCase);
                 WriteTcuCal.IsEnabled = _tcuCalToWrite != null;
+                TestFullRead.IsEnabled = string.Equals(_tcuSgbd, "gs20.prg",
+                                                       StringComparison.OrdinalIgnoreCase);
             }
         }
 
@@ -991,6 +1220,10 @@ namespace BmwebFlasher
                 // the write tooling stays shut for any other transmission.
                 bool isGs20 = string.Equals(_tcuSgbd, "gs20.prg", StringComparison.OrdinalIgnoreCase);
                 LoadTcuCal.IsEnabled = isGs20;
+
+                // Subcode 8 is a GS20 patch; the command means nothing
+                // anywhere else.
+                TestFullRead.IsEnabled = isGs20;
                 if (!isGs20)
                 {
                     _tcuCalToWrite = null;

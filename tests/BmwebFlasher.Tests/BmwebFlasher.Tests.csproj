@@ -22,6 +22,7 @@
     <Compile Include="..\..\src\BmwebFlasher\Gs20NoUpshift.cs" Link="Gs20NoUpshift.cs" />
     <Compile Include="..\..\src\BmwebFlasher\Ds2Telegram.cs" Link="Ds2Telegram.cs" />
     <Compile Include="..\..\src\BmwebFlasher\Gs20CalWriter.cs" Link="Gs20CalWriter.cs" />
+    <Compile Include="..\..\src\BmwebFlasher\Gs20FullReader.cs" Link="Gs20FullReader.cs" />
   </ItemGroup>
 
 </Project>

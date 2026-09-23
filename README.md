@@ -159,9 +159,18 @@ Verified on a real E46 (325i, MS45.1 + GS20):
   read-back byte-identical to the written calibration.
 - DME + TCU fault read / clear / export.
 - Serial + security-access + memory read/write over a macOS FTDI cable.
+- **Test Full Read** against a patched GS20: a tester's module identified
+  correctly and returned a partial read of a region outside the calibration.
 
 Not yet exercised on a car through this port: the **full-program / EWS flash**
 path (the brick-capable one). Treat it as unproven and keep a full backup.
+
+**Test Full Read** needs a module flashed with a patched program. Stock GS20
+firmware answers the `06` read only for the calibration, so the boot block and
+the program come back `B0`; the patch adds a subcode (`06 08`) that reads any
+address. A stock module is detected and reported rather than failing chunk by
+chunk. The button only reads -- nothing is written either way. A full 512 KB
+read has not yet been run end to end on hardware.
 
 Note: the transmission uses `gs20.prg` directly rather than the `D_EGS.grp`
 group file, because the group file's multi-module probe aborts on the first
