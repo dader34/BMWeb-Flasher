@@ -23,6 +23,9 @@
     <Compile Include="..\..\src\BmwebFlasher\Ds2Telegram.cs" Link="Ds2Telegram.cs" />
     <Compile Include="..\..\src\BmwebFlasher\Gs20CalWriter.cs" Link="Gs20CalWriter.cs" />
     <Compile Include="..\..\src\BmwebFlasher\Gs20FullReader.cs" Link="Gs20FullReader.cs" />
+    <Compile Include="..\..\src\BmwebFlasher\Gs20ProgramChecksum.cs" Link="Gs20ProgramChecksum.cs" />
+    <Compile Include="..\..\src\BmwebFlasher\Gs20ProgramWriter.cs" Link="Gs20ProgramWriter.cs" />
+    <Compile Include="..\..\src\BmwebFlasher\Gs20DatenFile.cs" Link="Gs20DatenFile.cs" />
   </ItemGroup>
 
 </Project>
