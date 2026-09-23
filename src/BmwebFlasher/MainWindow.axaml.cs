@@ -16,6 +16,24 @@ namespace BmwebFlasher
 {
     public partial class MainWindow : Window
     {
+        /// <summary>
+        /// Ends the process when the window closes.
+        ///
+        /// Closing the window ought to be enough on its own, and on macOS it
+        /// is. On Windows it was not: after a file picker had been opened the
+        /// window would go away and the process would stay, so the flasher
+        /// looked like it had refused to quit. Rather than keep hunting for
+        /// whichever handle was still held -- the pickers hand back COM
+        /// objects, and EDIABAS starts threads of its own -- shutdown is made
+        /// unconditional here. Nothing in this app needs to outlive its
+        /// window.
+        /// </summary>
+        protected override void OnClosed(EventArgs e)
+        {
+            base.OnClosed(e);
+            Environment.Exit(0);
+        }
+
         public MainWindow()
         {
             InitializeComponent();
