@@ -164,11 +164,23 @@ Verified on a real E46 (325i, MS45.1 + GS20):
   known image.
 - **.0DA calibration loading**: BMW's own Daten files are decoded to the raw
   64 KB image, verified against two calibrations read back off real modules.
+- **GS20 program write**: four sector erases, 2,223 write telegrams and a
+  commit, run on a tester's bench module; it identified after an ignition
+  cycle. The sector map and the session surviving its own program's erase
+  were both measured by that run rather than inferred.
 
 Not yet exercised on a car through this port: the **full-program / EWS flash**
 path (the brick-capable one). Treat it as unproven and keep a full backup.
 
-**Test Full Read** needs a module flashed with a patched program. Stock GS20
+**Write Program** erases and reprograms `0x0A0000-0x0DFFFF`. The module
+keeps serving the programming session until it is power-cycled, so a failed
+write can be redone at once -- but a bad program that is then power-cycled
+leaves a module that does not answer over the diagnostic port, and recovery
+is the boot-strap loader on the bench. The supply must read above 11.5 V or
+nothing is erased. Not yet exercised: a stock (unpatched) image, and a write
+onto a module at a different software release.
+
+**Read Selected Region** needs a module flashed with a patched program. Stock GS20
 firmware answers the `06` read only for the calibration, so the boot block and
 the program come back `B0`; the patch adds a subcode (`06 08`) that reads any
 address. A stock module is detected and reported rather than failing chunk by
