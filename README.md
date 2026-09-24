@@ -177,8 +177,9 @@ keeps serving the programming session until it is power-cycled, so a failed
 write can be redone at once -- but a bad program that is then power-cycled
 leaves a module that does not answer over the diagnostic port, and recovery
 is the boot-strap loader on the bench. The supply must read above 11.5 V or
-nothing is erased. Not yet exercised: a stock (unpatched) image, and a write
-onto a module at a different software release.
+nothing is erased. A stock `.0PA` write and the one-click read-patch install
+have both been run on a bench module and read back byte-for-byte. Not yet
+exercised: a write onto a module at a different software release.
 
 **Read Selected Region** needs a module flashed with a patched program. Stock GS20
 firmware answers the `06` read only for the calibration, so the boot block and
