@@ -70,4 +70,4 @@ echo "done:"
 ls -lh "$OUT"/*.zip | awk '{print "  " $9 "  " $5}'
 echo
 echo "macOS users will have to clear the quarantine flag on first run:"
-echo "  xattr -d com.apple.quarantine BmwebFlasher"
+echo "  xattr -dr com.apple.quarantine BmwebFlasher.app"
