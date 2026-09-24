@@ -1402,7 +1402,10 @@ namespace BmwebFlasher
                 }
             }
 
-            if (!await ConfirmAsync("This will overwrite the program, proceed?", "Write Program"))
+            if (!await ConfirmAsync(
+                    "This will overwrite the program. Keep the engine off with a charger on, " +
+                    "and do not switch off or unplug until it reports done.\n\nProceed?",
+                    "Write Program"))
             {
                 return;
             }
