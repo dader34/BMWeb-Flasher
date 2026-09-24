@@ -82,6 +82,21 @@
                 <Button x:Name="WriteTcuCal" Content="Write Calibration" HorizontalAlignment="Stretch"
                         Click="WriteTcuCal_Click" IsEnabled="False"
                         ToolTip.Tip="Erase and reprogram the transmission calibration over raw DS2."/>
+                <!-- Program write. The one path here whose failure is not
+                     recoverable over the diagnostic port: the DS2 handler
+                     lives in the region being rewritten, so a module left
+                     half-written stops answering and needs the boot-strap
+                     loader. Gated on ident, on the image's software level,
+                     and on an explicit acknowledgement. -->
+                <Button x:Name="LoadTcuProgram" Content="Load Program File" HorizontalAlignment="Stretch"
+                        Click="LoadTcuProgram_Click" IsEnabled="False"
+                        ToolTip.Tip="A 256 KB program region, a 512 KB full image, or a BMW .0PA. Its checksum is corrected on the way in."/>
+                <Button x:Name="WriteTcuProgram" Content="Write Program" HorizontalAlignment="Stretch"
+                        Click="WriteTcuProgram_Click" IsEnabled="False"
+                        ToolTip.Tip="Erase the four program sectors (0x0A0000-0x0DFFFF) and reprogram them. Not recoverable over the diagnostic port if it fails."/>
+                <Button x:Name="InstallReadPatch" Content="Install Read Patch" HorizontalAlignment="Stretch"
+                        Click="InstallReadPatch_Click" IsEnabled="False"
+                        ToolTip.Tip="Write the built-in 7552700 program with the full-read patch. Only for a transmission already on G2210_0090C0; the calibration is not touched."/>
                 <CheckBox x:Name="NoUpshift_CheckBox" Content="Remove auto upshift" IsEnabled="False"
                           Click="NoUpshift_CheckBox_Changed"
                           ToolTip.Tip="Raise every upshift point out of reach so the gearbox holds the gear you select. Applied to the loaded calibration before it is written."/>
@@ -104,21 +119,6 @@
                         Click="TestFullRead_Click" IsEnabled="False"
                         ToolTip.Tip="Read the whole 512 KB module image (boot block, calibration, program). Needs the patched program; identify checks for it."/>
 
-                <!-- Program write. The one path here whose failure is not
-                     recoverable over the diagnostic port: the DS2 handler
-                     lives in the region being rewritten, so a module left
-                     half-written stops answering and needs the boot-strap
-                     loader. Gated on ident, on the image's software level,
-                     and on an explicit acknowledgement. -->
-                <Button x:Name="LoadTcuProgram" Content="Load Program File" HorizontalAlignment="Stretch"
-                        Click="LoadTcuProgram_Click" IsEnabled="False"
-                        ToolTip.Tip="A 256 KB program region, a 512 KB full image, or a BMW .0PA. Its checksum is corrected on the way in."/>
-                <Button x:Name="WriteTcuProgram" Content="Write Program" HorizontalAlignment="Stretch"
-                        Click="WriteTcuProgram_Click" IsEnabled="False"
-                        ToolTip.Tip="Erase the four program sectors (0x0A0000-0x0DFFFF) and reprogram them. Not recoverable over the diagnostic port if it fails."/>
-                <Button x:Name="InstallReadPatch" Content="Install Read Patch" HorizontalAlignment="Stretch"
-                        Click="InstallReadPatch_Click" IsEnabled="False"
-                        ToolTip.Tip="Write the built-in 7552700 program with the full-read patch. Only for a transmission already on G2210_0090C0; the calibration is not touched."/>
               </StackPanel>
             </StackPanel>
           </ScrollViewer>
