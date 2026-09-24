@@ -44,6 +44,17 @@ build() {
   # The debug symbols are not wanted in a release archive.
   rm -f "$staging"/*.pdb
 
+  # macOS gets a real .app bundle: a bare executable shows the generic
+  # "exec" icon in the Dock and has no name; the bundle's Info.plist is
+  # what carries the icon and the name.
+  case "$rid" in
+    osx-*)
+      build/macapp.sh "$staging" "$OUT/$label-app" "$VERSION" >/dev/null
+      rm -rf "$staging"
+      mv "$OUT/$label-app" "$staging"
+      ;;
+  esac
+
   ( cd "$OUT" && zip -qr "BmwebFlasher-$VERSION-$label.zip" "$label" )
   rm -rf "$staging"
 
