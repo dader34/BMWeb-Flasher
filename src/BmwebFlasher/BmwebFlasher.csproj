@@ -9,9 +9,9 @@
     <RootNamespace>BmwebFlasher</RootNamespace>
     <AssemblyName>BmwebFlasher</AssemblyName>
     <!-- Shown in the window title, which reads it back off the assembly. -->
-    <Version>1.1.0.5</Version>
-    <AssemblyVersion>1.1.0.5</AssemblyVersion>
-    <FileVersion>1.1.0.5</FileVersion>
+    <Version>1.1.0.6</Version>
+    <AssemblyVersion>1.1.0.6</AssemblyVersion>
+    <FileVersion>1.1.0.6</FileVersion>
     <ApplicationIcon>Assets/icon.ico</ApplicationIcon>
     <!-- EdiabasLib's multi-targeting evaluates Windows TFMs during restore even
          when we only build net8.0, so the SDK needs this to resolve them. -->
