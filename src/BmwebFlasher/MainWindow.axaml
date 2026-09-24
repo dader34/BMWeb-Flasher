@@ -3,6 +3,7 @@
         xmlns:local="clr-namespace:BmwebFlasher"
         x:Class="BmwebFlasher.MainWindow"
         Width="640" Height="640" MinWidth="620" MinHeight="620"
+        Icon="/Assets/icon.ico"
         Title="BMWeb Flasher">
   <!-- The WPF original positioned every control with absolute Margins inside a
        Grid. That does not survive a different text renderer, so the port uses

@@ -12,10 +12,16 @@
     <Version>1.1.0.5</Version>
     <AssemblyVersion>1.1.0.5</AssemblyVersion>
     <FileVersion>1.1.0.5</FileVersion>
+    <ApplicationIcon>Assets/icon.ico</ApplicationIcon>
     <!-- EdiabasLib's multi-targeting evaluates Windows TFMs during restore even
          when we only build net8.0, so the SDK needs this to resolve them. -->
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
   </PropertyGroup>
+
+  <ItemGroup>
+    <AvaloniaResource Include="Assets/icon.ico" />
+    <AvaloniaResource Include="Assets/icon.png" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="System.Text.Encoding.CodePages" Version="8.0.0" />
