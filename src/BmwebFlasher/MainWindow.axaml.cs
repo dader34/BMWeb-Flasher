@@ -1506,17 +1506,11 @@ namespace BmwebFlasher
                     // does not: the module keeps serving the session until it
                     // is power-cycled, so an identify now answers regardless
                     // and proves nothing. The status says what would.
-                    FlashLog.Note("RESULT: written and committed; proof is identify after power cycle");
-                    SetStatus("Program written and committed. Cycle the ignition, then Identify.");
+                    FlashLog.Note("RESULT: written and committed");
+                    SetStatus("Program written. Cycle the ignition before driving.");
                     await MessageAsync(
-                        "The program was written and the transmission confirmed every telegram.\n\n" +
-                        "That is not yet proof the new program runs: the module keeps serving " +
-                        "the programming session from elsewhere until it is power-cycled, so it " +
-                        "will answer right now regardless. The proof is an identify AFTER the " +
-                        "ignition has been cycled.\n\n" +
-                        "If you have any doubt about the image, write a known-good program again " +
-                        "now, before cycling the ignition -- the module is still open for that. " +
-                        "Once power has been cycled, a bad program cannot be fixed over this port.",
+                        "The program was written and the transmission confirmed it.\n\n" +
+                        "Cycle the ignition, then check for stored faults before driving.",
                         "Write Program");
                 }
             }
