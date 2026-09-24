@@ -1392,15 +1392,9 @@ namespace BmwebFlasher
             string reported = (_tcuIdentSwNr ?? string.Empty).Trim().TrimStart('0');
             if (!string.Equals(release, reported, StringComparison.Ordinal))
             {
-                if (!await ConfirmWithAcknowledgementAsync(
-                        "This program is release " + release + "; the transmission reports " +
-                        (reported.Length == 0 ? "no software level" : "release " + reported) + ".\n\n" +
-                        "The calibration already on the transmission was paired with its " +
-                        "current program. Changing the program underneath it is what a " +
-                        "WinKFP update does -- but if this image carries the read patch, " +
-                        "its hook lands inside another instruction on a different release " +
-                        "and the module will not run.",
-                        "I understand the software levels differ, and I accept the risk.",
+                if (!await ConfirmAsync(
+                        "Calibration read off of the transmission doesn't match the loaded file. " +
+                        "This may cause an error within the software. Proceed?",
                         "Program does not match"))
                 {
                     SetStatus("Write cancelled: the program does not match the transmission");
@@ -1408,18 +1402,7 @@ namespace BmwebFlasher
                 }
             }
 
-            if (!await ConfirmWithAcknowledgementAsync(
-                    "This erases the four program sectors (0x0A0000-0x0DFFFF) and reprograms them.\n\n" +
-                    "The transmission's diagnostic handler lives in that region. It keeps " +
-                    "answering until the next power cycle, so a failed write can be redone at " +
-                    "once -- but if the ignition is cycled with a bad program in place, the " +
-                    "module will not answer over the diagnostic port again and cannot be " +
-                    "reflashed with this or any other tool. Recovery is then the boot-strap " +
-                    "loader on the bench.\n\n" +
-                    "The calibration and boot block are not touched.\n\n" +
-                    "Use a bench supply or a charger. Do not switch off or unplug until it reports done.",
-                    "I understand a failed program write is not recoverable over the diagnostic port.",
-                    "Write Program"))
+            if (!await ConfirmAsync("This will overwrite the program, proceed?", "Write Program"))
             {
                 return;
             }
