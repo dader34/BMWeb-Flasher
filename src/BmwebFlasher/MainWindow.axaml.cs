@@ -1334,15 +1334,6 @@ namespace BmwebFlasher
                 return;
             }
 
-            if (_tcuHasReadPatch &&
-                !await ConfirmAsync(
-                    "Identify found this transmission already answering the patched read. " +
-                    "Write the patched program again anyway?",
-                    "Install Read Patch"))
-            {
-                return;
-            }
-
             byte[] program;
             try
             {
@@ -1555,7 +1546,7 @@ namespace BmwebFlasher
                 TestFullRead.IsEnabled = _tcuHasReadPatch;
                 LoadTcuProgram.IsEnabled = isGs20;
                 WriteTcuProgram.IsEnabled = isGs20 && _tcuProgramToWrite != null;
-                InstallReadPatch.IsEnabled = isGs20;
+                InstallReadPatch.IsEnabled = isGs20 && !_tcuHasReadPatch;
             }
         }
 
@@ -1755,7 +1746,7 @@ namespace BmwebFlasher
                 TestFullRead.IsEnabled = _tcuHasReadPatch;
                 LoadTcuProgram.IsEnabled = gs20;
                 WriteTcuProgram.IsEnabled = gs20 && _tcuProgramToWrite != null;
-                InstallReadPatch.IsEnabled = gs20;
+                InstallReadPatch.IsEnabled = gs20 && !_tcuHasReadPatch;
             }
         }
 
@@ -1802,6 +1793,9 @@ namespace BmwebFlasher
             Dispatcher.UIThread.Post(() =>
             {
                 TestFullRead.IsEnabled = _tcuHasReadPatch;
+                // A module that already answers the patched read has nothing
+                // to install; the button greys out rather than asking.
+                InstallReadPatch.IsEnabled = !_tcuHasReadPatch;
                 if (_tcuHasReadPatch)
                     SetStatus("TCU identified (" + _tcuSgbd + "), patched program: full read available");
                 else
@@ -1842,7 +1836,7 @@ namespace BmwebFlasher
                 TestFullRead.IsEnabled = false;
                 LoadTcuProgram.IsEnabled = isGs20;
                 WriteTcuProgram.IsEnabled = isGs20 && _tcuProgramToWrite != null;
-                InstallReadPatch.IsEnabled = isGs20;
+                InstallReadPatch.IsEnabled = isGs20 && !_tcuHasReadPatch;
                 if (!isGs20)
                 {
                     _tcuCalToWrite = null;
