@@ -455,6 +455,7 @@ namespace BmwebFlasher
             LoadTcuCal.IsEnabled = false;
             WriteTcuCal.IsEnabled = false;
             TestFullRead.IsEnabled = false;
+            _tcuHasReadPatch = false;
             LoadTcuProgram.IsEnabled = false;
             WriteTcuProgram.IsEnabled = false;
             _tcuCalToWrite = null;
@@ -540,6 +541,7 @@ namespace BmwebFlasher
             }
 
             SetStatus("Probing transmission variants...");
+            bool found = false;
             foreach (string variant in TcuVariants)
             {
                 using EdiabasNet ediabas = StartEdiabasSgbd(variant);
@@ -547,8 +549,17 @@ namespace BmwebFlasher
                 {
                     _tcuSgbd = variant;
                     ShowTcuIdent(ediabas, variant);
-                    return;
+                    found = true;
+                    break;
                 }
+            }
+            if (found)
+            {
+                // EDIABAS has let go of the port here (the using above is per
+                // iteration), so the raw link can have it for one question.
+                if (string.Equals(_tcuSgbd, "gs20.prg", StringComparison.OrdinalIgnoreCase))
+                    ProbeReadPatch();
+                return;
             }
 
             SetStatus("No response from the TCU");
@@ -635,27 +646,10 @@ namespace BmwebFlasher
                 return;
             }
 
-            int region = TestFullReadRegion.SelectedIndex;
-            int address, length, minutesAt9600;
-            string label;
-            switch (region)
-            {
-                case 1:
-                    address = Gs20FullReader.ProgramAddress;
-                    length = Gs20FullReader.ProgramLength;
-                    label = "program";
-                    break;
-                case 2:
-                    address = Gs20FullReader.FullAddress;
-                    length = Gs20FullReader.FullLength;
-                    label = "full";
-                    break;
-                default:
-                    address = Gs20FullReader.BootAddress;
-                    length = Gs20FullReader.BootLength;
-                    label = "boot";
-                    break;
-            }
+            int address = Gs20FullReader.FullAddress;
+            int length = Gs20FullReader.FullLength;
+            string label = "full";
+            int minutesAt9600;
 
             // Roughly: one chunk per telegram, both directions, plus framing.
             minutesAt9600 = (int)Math.Ceiling(
@@ -735,7 +729,7 @@ namespace BmwebFlasher
             }
             finally
             {
-                TestFullRead.IsEnabled = true;
+                TestFullRead.IsEnabled = _tcuHasReadPatch;
                 ReadTcuCal.IsEnabled = true;
             }
         }
@@ -927,6 +921,12 @@ namespace BmwebFlasher
 
         /// <summary>The calibration picked for a write, already checksum-corrected.</summary>
         private byte[] _tcuCalToWrite;
+
+        /// <summary>
+        /// Whether identify found the module answering subcode 8, i.e. running
+        /// the patched program. Gates Read Full; a stock module never has it.
+        /// </summary>
+        private bool _tcuHasReadPatch;
 
         /// <summary>The program region queued for writing, checksum corrected.</summary>
         private byte[] _tcuProgramToWrite;
@@ -1479,7 +1479,8 @@ namespace BmwebFlasher
                 ReadTcuCal.IsEnabled = true;
                 LoadTcuCal.IsEnabled = isGs20;
                 WriteTcuCal.IsEnabled = _tcuCalToWrite != null;
-                TestFullRead.IsEnabled = LoadTcuProgram.IsEnabled = isGs20;
+                TestFullRead.IsEnabled = _tcuHasReadPatch;
+                LoadTcuProgram.IsEnabled = isGs20;
                 WriteTcuProgram.IsEnabled = isGs20 && _tcuProgramToWrite != null;
             }
         }
@@ -1676,10 +1677,10 @@ namespace BmwebFlasher
                 LoadTcuCal.IsEnabled = string.Equals(_tcuSgbd, "gs20.prg",
                                                      StringComparison.OrdinalIgnoreCase);
                 WriteTcuCal.IsEnabled = _tcuCalToWrite != null;
-                TestFullRead.IsEnabled = string.Equals(_tcuSgbd, "gs20.prg",
-                                                       StringComparison.OrdinalIgnoreCase);
-                LoadTcuProgram.IsEnabled = TestFullRead.IsEnabled;
-                WriteTcuProgram.IsEnabled = TestFullRead.IsEnabled && _tcuProgramToWrite != null;
+                bool gs20 = string.Equals(_tcuSgbd, "gs20.prg", StringComparison.OrdinalIgnoreCase);
+                TestFullRead.IsEnabled = _tcuHasReadPatch;
+                LoadTcuProgram.IsEnabled = gs20;
+                WriteTcuProgram.IsEnabled = gs20 && _tcuProgramToWrite != null;
             }
         }
 
@@ -1701,6 +1702,36 @@ namespace BmwebFlasher
                 : ", checksum does NOT match (stored 0x" +
                   Gs20Checksum.Stored(cal).ToString("X4") + ", expected 0x" +
                   Gs20Checksum.Compute(cal).ToString("X4") + ")";
+        }
+
+        /// <summary>
+        /// Asks the module one subcode-8 read. Only a module running the
+        /// patched program answers it; stock firmware returns B0. Read Full
+        /// lights on a correct answer and stays dark otherwise, so nobody
+        /// presses it to find out.
+        /// </summary>
+        private void ProbeReadPatch()
+        {
+            string problem;
+            try
+            {
+                using var link = new Ds2SerialLink(Global.Port);
+                problem = new Gs20FullReader(link).Probe();
+            }
+            catch (Exception ex)
+            {
+                problem = ex.Message;
+            }
+            _tcuHasReadPatch = problem == null;
+
+            Dispatcher.UIThread.Post(() =>
+            {
+                TestFullRead.IsEnabled = _tcuHasReadPatch;
+                if (_tcuHasReadPatch)
+                    SetStatus("TCU identified (" + _tcuSgbd + "), patched program: full read available");
+                else
+                    SetStatus("TCU identified (" + _tcuSgbd + "), stock program: full read unavailable");
+            });
         }
 
         private void ShowTcuIdent(EdiabasNet ediabas, string sgbdLabel)
@@ -1731,9 +1762,9 @@ namespace BmwebFlasher
                 bool isGs20 = string.Equals(_tcuSgbd, "gs20.prg", StringComparison.OrdinalIgnoreCase);
                 LoadTcuCal.IsEnabled = isGs20;
 
-                // Subcode 8 is a GS20 patch; the command means nothing
-                // anywhere else.
-                TestFullRead.IsEnabled = isGs20;
+                // Read Full is decided by the probe that follows identify,
+                // not by the module type: only a patched program answers it.
+                TestFullRead.IsEnabled = false;
                 LoadTcuProgram.IsEnabled = isGs20;
                 WriteTcuProgram.IsEnabled = isGs20 && _tcuProgramToWrite != null;
                 if (!isGs20)
