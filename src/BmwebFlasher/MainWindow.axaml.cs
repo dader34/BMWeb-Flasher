@@ -1434,10 +1434,12 @@ namespace BmwebFlasher
                         }
                     });
 
-                    // Re-identify, as the DME flash does: the proof a program
-                    // write worked is that the module still says who it is.
-                    FlashLog.Note("PHASE: re-identify");
-                    SetStatus("Program written. Identifying...");
+                    // The DME flash re-identifies here. This path deliberately
+                    // does not: the module keeps serving the session until it
+                    // is power-cycled, so an identify now answers regardless
+                    // and proves nothing. The status says what would.
+                    FlashLog.Note("RESULT: written and committed; proof is identify after power cycle");
+                    SetStatus("Program written and committed. Cycle the ignition, then Identify.");
                     await MessageAsync(
                         "The program was written and the transmission confirmed every telegram.\n\n" +
                         "That is not yet proof the new program runs: the module keeps serving " +
