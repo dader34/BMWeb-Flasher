@@ -198,8 +198,8 @@ namespace BmwebFlasher.Tests
             // The strongest check available: a calibration read back off a real
             // transmission, against the same calibration decoded from SP-Daten.
             string read = Environment.GetEnvironmentVariable("BMWEB_MODULE_READ")
-                ?? "/Users/dannerbaumgartner/Downloads/" +
-                   "TCU_cal_20260923_015604_error_code_fixed.bin";
+                ?? "/Users/dannerbaumgartner/Desktop/e46bins/GS20-gearbox/research/" +
+                   "calibration-reads/TCU_cal_20260923_015604_error_code_fixed.bin";
             Skip.IfNot(File.Exists(read) && File.Exists(Daten("A7557985.0DA")),
                        "the module read or SP-Daten is not on this machine");
 
