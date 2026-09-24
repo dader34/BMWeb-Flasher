@@ -96,17 +96,13 @@
                      together, and a picker with its button below the fold
                      reads as broken. -->
                 <Separator Margin="0,4,0,0"/>
-                <TextBlock Text="Patched firmware only" FontSize="11" Opacity="0.6"/>
-                <ComboBox x:Name="TestFullReadRegion" HorizontalAlignment="Stretch"
-                          SelectedIndex="0"
-                          ToolTip.Tip="Which region to read with subcode 8.">
-                  <ComboBoxItem Content="Boot block (0x080000, 64 KB)"/>
-                  <ComboBoxItem Content="Program (0x0A0000, 256 KB)"/>
-                  <ComboBoxItem Content="Everything (0x080000, 512 KB)"/>
-                </ComboBox>
-                <Button x:Name="TestFullRead" Content="Read Selected Region" HorizontalAlignment="Stretch"
+                <!-- Full read through the patched program's subcode-8 read.
+                     Enabled only when identify found the module answering
+                     that subcode; a stock module never lights it. -->
+                <Button x:Name="TestFullRead" Content="Read Full" HorizontalAlignment="Stretch"
                         Click="TestFullRead_Click" IsEnabled="False"
-                        ToolTip.Tip="Read outside the calibration using the patched program's subcode-8 read. A stock module answers B0 and nothing is written to the module either way."/>
+                        ToolTip.Tip="Read the whole 512 KB module image (boot block, calibration, program). Needs the patched program; identify checks for it."/>
+
                 <!-- Program write. The one path here whose failure is not
                      recoverable over the diagnostic port: the DS2 handler
                      lives in the region being rewritten, so a module left
