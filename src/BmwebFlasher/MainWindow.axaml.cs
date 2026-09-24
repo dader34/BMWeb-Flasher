@@ -458,6 +458,7 @@ namespace BmwebFlasher
             _tcuHasReadPatch = false;
             LoadTcuProgram.IsEnabled = false;
             WriteTcuProgram.IsEnabled = false;
+            InstallReadPatch.IsEnabled = false;
             _tcuCalToWrite = null;
             _tcuProgramToWrite = null;
             _tcuSgbd = null;
@@ -1297,6 +1298,78 @@ namespace BmwebFlasher
         }
 
         /// <summary>
+        /// The built-in 7552700 program carrying the subcode-8 read routine:
+        /// the program region of the image that was proven on a bench module.
+        /// </summary>
+        private static byte[] LoadEmbeddedReadPatchProgram()
+        {
+            using var stream = Avalonia.Platform.AssetLoader.Open(
+                new Uri("avares://BmwebFlasher/Assets/gs20_7552700_readpatch_program.bin"));
+            using var ms = new MemoryStream();
+            stream.CopyTo(ms);
+            return ms.ToArray();
+        }
+
+        /// <summary>
+        /// One click to put the read patch on a stock 7552700 module. Loads the
+        /// built-in program and hands it to the same write path as a user
+        /// file, so every gate and dialog is shared -- with one difference:
+        /// this image's hook is a retargeted jump at a fixed address, valid on
+        /// G2210_0090C0 and nothing else, so a release mismatch is refused
+        /// outright rather than offered for acknowledgement.
+        /// </summary>
+        private async void InstallReadPatch_Click(object sender, RoutedEventArgs e)
+        {
+            string reported = (_tcuIdentSwNr ?? string.Empty).Trim().TrimStart('0');
+            string part = (_tcuIdentBmwNr ?? string.Empty).Trim();
+            if (reported != "90" || !part.Contains("7552700"))
+            {
+                await MessageAsync(
+                    "The read patch is built for program 7552700, software release 90 " +
+                    "(G2210_0090C0). This transmission reports " + DescribeIdentifiedSoftware() +
+                    ".\n\nOn any other release the patch's hook lands inside a different " +
+                    "instruction and the module will not run, so it is not offered here. " +
+                    "Update the transmission to 7552700 with WinKFP first.",
+                    "Install Read Patch");
+                return;
+            }
+
+            if (_tcuHasReadPatch &&
+                !await ConfirmAsync(
+                    "Identify found this transmission already answering the patched read. " +
+                    "Write the patched program again anyway?",
+                    "Install Read Patch"))
+            {
+                return;
+            }
+
+            byte[] program;
+            try
+            {
+                program = LoadEmbeddedReadPatchProgram();
+            }
+            catch (Exception ex)
+            {
+                await MessageAsync("The built-in program could not be loaded: " + ex.Message,
+                                   "Install Read Patch");
+                return;
+            }
+
+            if (program.Length != Gs20ProgramWriter.ProgramLength ||
+                !ProgramHasReadPatch(program) || !Gs20ProgramChecksum.Verify(program))
+            {
+                await MessageAsync(
+                    "The built-in program failed its own checks, so it is not being written.",
+                    "Install Read Patch");
+                return;
+            }
+
+            _tcuProgramToWrite = program;
+            SetStatus("Built-in 7552700 read-patch program loaded");
+            WriteTcuProgram_Click(sender, e);
+        }
+
+        /// <summary>
         /// Writes the program region. Structured like the DME's full-program
         /// flash: security first, everything prepared before the first erase,
         /// each phase logged, and a re-identify after. There is no read-back:
@@ -1482,6 +1555,7 @@ namespace BmwebFlasher
                 TestFullRead.IsEnabled = _tcuHasReadPatch;
                 LoadTcuProgram.IsEnabled = isGs20;
                 WriteTcuProgram.IsEnabled = isGs20 && _tcuProgramToWrite != null;
+                InstallReadPatch.IsEnabled = isGs20;
             }
         }
 
@@ -1681,6 +1755,7 @@ namespace BmwebFlasher
                 TestFullRead.IsEnabled = _tcuHasReadPatch;
                 LoadTcuProgram.IsEnabled = gs20;
                 WriteTcuProgram.IsEnabled = gs20 && _tcuProgramToWrite != null;
+                InstallReadPatch.IsEnabled = gs20;
             }
         }
 
@@ -1767,6 +1842,7 @@ namespace BmwebFlasher
                 TestFullRead.IsEnabled = false;
                 LoadTcuProgram.IsEnabled = isGs20;
                 WriteTcuProgram.IsEnabled = isGs20 && _tcuProgramToWrite != null;
+                InstallReadPatch.IsEnabled = isGs20;
                 if (!isGs20)
                 {
                     _tcuCalToWrite = null;
