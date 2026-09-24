@@ -1342,10 +1342,12 @@ namespace BmwebFlasher
 
             if (!await ConfirmWithAcknowledgementAsync(
                     "This erases the four program sectors (0x0A0000-0x0DFFFF) and reprograms them.\n\n" +
-                    "The transmission's diagnostic handler lives in that region. If this write is " +
-                    "interrupted -- power, cable, anything -- the module will not answer over the " +
-                    "diagnostic port afterwards and cannot be reflashed with this or any other " +
-                    "tool. Recovery is the boot-strap loader on the bench.\n\n" +
+                    "The transmission's diagnostic handler lives in that region. It keeps " +
+                    "answering until the next power cycle, so a failed write can be redone at " +
+                    "once -- but if the ignition is cycled with a bad program in place, the " +
+                    "module will not answer over the diagnostic port again and cannot be " +
+                    "reflashed with this or any other tool. Recovery is then the boot-strap " +
+                    "loader on the bench.\n\n" +
                     "The calibration and boot block are not touched.\n\n" +
                     "Use a bench supply or a charger. Do not switch off or unplug until it reports done.",
                     "I understand a failed program write is not recoverable over the diagnostic port.",
@@ -1437,9 +1439,14 @@ namespace BmwebFlasher
                     FlashLog.Note("PHASE: re-identify");
                     SetStatus("Program written. Identifying...");
                     await MessageAsync(
-                        "The program was written and the transmission confirmed it.\n\n" +
-                        "Cycle the ignition, then identify the transmission and check for " +
-                        "stored faults. Identify answering is the proof the program runs.",
+                        "The program was written and the transmission confirmed every telegram.\n\n" +
+                        "That is not yet proof the new program runs: the module keeps serving " +
+                        "the programming session from elsewhere until it is power-cycled, so it " +
+                        "will answer right now regardless. The proof is an identify AFTER the " +
+                        "ignition has been cycled.\n\n" +
+                        "If you have any doubt about the image, write a known-good program again " +
+                        "now, before cycling the ignition -- the module is still open for that. " +
+                        "Once power has been cycled, a bad program cannot be fixed over this port.",
                         "Write Program");
                 }
             }
@@ -1450,9 +1457,12 @@ namespace BmwebFlasher
                     ? "\n\nNothing was erased or written, so the program on the transmission " +
                       "is unchanged."
                     : "\n\n" + _tcuProgramSectorsErased + " of 4 program sectors were erased before " +
-                      "this failed. If the transmission no longer answers, it will not answer " +
-                      "any flasher either: recovery is the boot-strap loader on the bench. " +
-                      "The boot block and calibration are intact.";
+                      "this failed.\n\nDO NOT SWITCH THE IGNITION OFF. The transmission keeps " +
+                      "serving the programming session until it is power-cycled, so it is still " +
+                      "open right now: fix the cause, load a known-good program and write it " +
+                      "again immediately. It is only after a power cycle that a half-written " +
+                      "program stops the module answering, and from then on recovery is the " +
+                      "boot-strap loader on the bench. The boot block and calibration are intact.";
                 await MessageAsync(Describe(ex) + aftermath + DescribeLog(logPath), "Write Program");
             }
             finally
