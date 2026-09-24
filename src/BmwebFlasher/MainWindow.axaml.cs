@@ -433,6 +433,7 @@ namespace BmwebFlasher
                 // Nothing chosen yet: hide both control sets, prompt to choose.
                 DmePanel.IsVisible = false;
                 TcuPanel.IsVisible = false;
+                LoadSGBD.IsVisible = false;
                 IdentifyDME.IsEnabled = false;
                 ModuleInfoHeader.Text = "Select a control unit above.";
                 return;
@@ -441,6 +442,9 @@ namespace BmwebFlasher
             _flashTcu = idx == 1;
             DmePanel.IsVisible = !_flashTcu;
             TcuPanel.IsVisible = _flashTcu;
+            // The SGBD picker is a DME control: the transmission's SGBD is
+            // resolved on identify, so the button has nothing to do there.
+            LoadSGBD.IsVisible = !_flashTcu;
             IdentifyDME.IsEnabled = true;
             ModuleInfoHeader.Text = _flashTcu ? "TCU Information:" : "DME Information:";
 
