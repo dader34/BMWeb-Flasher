@@ -21,6 +21,7 @@
   <ItemGroup>
     <AvaloniaResource Include="Assets/icon.ico" />
     <AvaloniaResource Include="Assets/icon.png" />
+    <AvaloniaResource Include="Assets/gs20_7552700_readpatch_program.bin" />
   </ItemGroup>
 
   <ItemGroup>
