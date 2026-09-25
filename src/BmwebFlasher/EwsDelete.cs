@@ -4,29 +4,31 @@ using System.Collections.Generic;
 namespace BmwebFlasher
 {
     /// <summary>
-    /// EWS (immobilizer) delete patch for the MS45.1 external flash.
+    /// EWS (immobilizer) delete for the MS45.1 external flash.
     ///
-    /// The DME keeps three EWS status bytes in its global data block, addressed
-    /// off r13 as r13-0x3C30, -0x3C2F and -0x3C2E. Several routines set those
-    /// bytes to 1 to mark "EWS says no". The patch makes every one of those
-    /// sites leave the bytes at 0, so the engine-disable path is never armed.
+    /// The delete is three edits in the external image:
     ///
-    /// Two shapes appear in the binary:
+    ///   0x48F2C : 0x10 (EWS active) -> 0x00 (EWS off)         calibration flag
+    ///   0x48F3E : 0x10 (EWS active) -> 0x00 (EWS off)         calibration flag
+    ///   0x10A88 : 88 8D 82 48 -> 38 80 00 22                  code patch
     ///
-    ///   li  rX,1          <- the immediate byte is flipped 1 -> 0
-    ///   stb rX,-0x3C30(r13)
+    /// The two flag bytes disable the EWS-active calibration flags. The code
+    /// patch at 0x10A88 replaces `lbz r4,-0x7DB8(r13)` (read the EWS status
+    /// byte from RAM) with `li r4,0x22` (load a fixed non-zero constant), so the
+    /// status check right after it always takes the pass path. All three are
+    /// needed: with only the flags cleared the flash completes but the car still
+    /// cranks-no-start, because the dynamic check at 0x10A88 still runs.
     ///
-    ///   stb rX,-0x3C30(r13)   <- the whole store is replaced with a nop,
-    ///                            because rX is reused by the surrounding code
-    ///                            and its value cannot simply be changed.
+    /// Derived 2026-09-25 by diffing a known-good EWS-deleted image (produced by
+    /// BTT MS45 Quickflash and confirmed to start the car) against the donor's
+    /// stock external image: after the RSA-signature and checksum blocks are
+    /// discounted (the writer recomputes those), the only functional change is
+    /// these two bytes. The MPC internal flash is NOT touched by the delete.
     ///
-    /// Derived by diffing a stock Original_external.bin against a known-good
-    /// patched image; applying these eight edits to stock reproduces that image
-    /// byte for byte (see EwsDeleteTests). Every remaining store to these three
-    /// bytes elsewhere in the image already writes 0.
-    ///
-    /// This is MS45.1 (HW ref 0044570) only. The offsets are absolute positions
-    /// in the 0x100000 external flash image.
+    /// This is MS45.1 program 0044570LO02S only. Both offsets are absolute
+    /// positions in the 0x100000 external flash image, and both must read the
+    /// expected stock value 0x10 before the delete is applied, so it cannot land
+    /// on an image whose layout differs.
     /// </summary>
     public static class EwsDelete
     {
@@ -35,18 +37,24 @@ namespace BmwebFlasher
 
         /// <summary>
         /// The program version string, at 0x6031C in the external image.
-        /// The patch offsets were derived against this version only.
-        ///
-        /// The other MS45.1 program in SP-Daten, 7549388A.0PA (0044570LN00S,
-        /// 2004), reports the same 0044570 hardware reference but lays its
-        /// globals out differently: it has no store to r13-0x3C30 at all and
-        /// only one to -0x3C2F, at a completely different address. The patch
-        /// does not transfer to it, which is why the version - not just the
-        /// hardware reference - is what gates this.
+        /// The flag offsets were derived against this version only. Other
+        /// MS45.1 programs lay their calibration out differently, so the version
+        /// - not just the 0044570 hardware reference - is what gates this.
         /// </summary>
         public const string SupportedProgramVersion = "0044570LO02S";
 
         private const int ProgramVersionOffset = 0x6031C;
+
+        /// <summary>
+        /// The delete edits: (offset, expected stock bytes, replacement bytes).
+        /// Two single-byte calibration flags and one 4-byte code patch.
+        /// </summary>
+        private static readonly (int Offset, byte[] Stock, byte[] Deleted)[] Edits =
+        {
+            (0x48F2C, new byte[] { 0x10 }, new byte[] { 0x00 }),
+            (0x48F3E, new byte[] { 0x10 }, new byte[] { 0x00 }),
+            (0x10A88, new byte[] { 0x88, 0x8D, 0x82, 0x48 }, new byte[] { 0x38, 0x80, 0x00, 0x22 }),
+        };
 
         /// <summary>
         /// Reads the program version string from a full external image, or null
@@ -69,28 +77,9 @@ namespace BmwebFlasher
         }
 
         /// <summary>
-        /// Sites where a "li rX,1" immediate becomes 0. The offset points at the
-        /// low byte of the instruction's immediate field.
-        /// </summary>
-        private static readonly int[] ImmediateSites =
-        {
-            0x770A3, 0x773C3, 0x773EB, 0x77417, 0x775FB
-        };
-
-        /// <summary>
-        /// Sites where a whole 4-byte store instruction becomes a nop.
-        /// </summary>
-        private static readonly int[] NopSites =
-        {
-            0xD297C, 0xD2C54, 0xD2C58
-        };
-
-        /// <summary>PowerPC nop: ori r0,r0,0.</summary>
-        private static readonly byte[] Nop = { 0x60, 0x00, 0x00, 0x00 };
-
-        /// <summary>
-        /// True when every patch site still holds its expected stock value, i.e.
-        /// this looks like an unpatched MS45.1 external image.
+        /// True when this looks like an unpatched MS45.1 external image the
+        /// delete can be applied to: right size, right program version, and both
+        /// flag bytes still at their stock 0x10.
         /// </summary>
         public static bool IsApplicable(byte[] flash)
         {
@@ -100,53 +89,41 @@ namespace BmwebFlasher
             if (ReadProgramVersion(flash) != SupportedProgramVersion)
                 return false;
 
-            foreach (int offset in ImmediateSites)
-            {
-                if (flash[offset] != 0x01)
+            foreach (var (offset, stock, _) in Edits)
+                if (!MatchesAt(flash, offset, stock))
                     return false;
-            }
-
-            foreach (int offset in NopSites)
-            {
-                // The stock instruction is a stb against r13; the opcode byte
-                // (0x99 or 0x9B) plus the r13 operand identify it.
-                if (flash[offset] != 0x99 && flash[offset] != 0x9B)
-                    return false;
-            }
 
             return true;
         }
 
-        /// <summary>
-        /// True when every site already carries the patched value.
-        /// </summary>
+        /// <summary>True when every edit already holds its deleted value.</summary>
         public static bool IsAlreadyPatched(byte[] flash)
         {
             if (flash == null || flash.Length != FullFlashLength)
                 return false;
 
-            foreach (int offset in ImmediateSites)
-            {
-                if (flash[offset] != 0x00)
-                    return false;
-            }
+            if (ReadProgramVersion(flash) != SupportedProgramVersion)
+                return false;
 
-            foreach (int offset in NopSites)
-            {
-                for (int i = 0; i < Nop.Length; i++)
-                {
-                    if (flash[offset + i] != Nop[i])
-                        return false;
-                }
-            }
+            foreach (var (offset, _, deleted) in Edits)
+                if (!MatchesAt(flash, offset, deleted))
+                    return false;
 
             return true;
         }
 
+        private static bool MatchesAt(byte[] flash, int offset, byte[] expected)
+        {
+            for (int i = 0; i < expected.Length; i++)
+                if (flash[offset + i] != expected[i])
+                    return false;
+            return true;
+        }
+
         /// <summary>
-        /// Returns a patched copy of <paramref name="flash"/>. The input is not
-        /// modified. Throws if the image does not match what the patch expects,
-        /// rather than writing to offsets whose contents are unknown.
+        /// Returns a copy with the EWS delete applied. The caller's array is left
+        /// alone. Checksums and the RSA signature are corrected by the writer on
+        /// the way to the car, not here.
         /// </summary>
         public static byte[] Apply(byte[] flash)
         {
@@ -170,37 +147,26 @@ namespace BmwebFlasher
                 {
                     throw new InvalidOperationException(
                         "EWS delete is only verified for program version " + SupportedProgramVersion +
-                        ", but this image reports " + (version ?? "an unreadable version") + ". " +
-                        "Other MS45.1 programs lay their globals out differently, so the patch " +
-                        "offsets would land on unrelated code.");
+                        ", but this image reports " + (version ?? "an unreadable version") + ".");
                 }
 
                 throw new InvalidOperationException(
-                    "This image is the right program version but does not carry the expected " +
-                    "instructions at the patch sites, so it may already be modified. " +
-                    "Refusing to patch, because writing these offsets blind could brick the DME.");
+                    "This image is the right program version but the EWS flag bytes are not at " +
+                    "their expected stock value, so it may already be modified. Refusing to patch.");
             }
 
             byte[] patched = (byte[])flash.Clone();
-
-            foreach (int offset in ImmediateSites)
-                patched[offset] = 0x00;
-
-            foreach (int offset in NopSites)
-                Buffer.BlockCopy(Nop, 0, patched, offset, Nop.Length);
-
+            foreach (var (offset, _, deleted) in Edits)
+                Buffer.BlockCopy(deleted, 0, patched, offset, deleted.Length);
             return patched;
         }
 
-        /// <summary>
-        /// Human-readable list of the edits, for logging before a flash.
-        /// </summary>
+        /// <summary>Human-readable list of the edits, for logging before a flash.</summary>
         public static IEnumerable<string> Describe()
         {
-            foreach (int offset in ImmediateSites)
-                yield return string.Format("0x{0:X5}: li immediate 1 -> 0", offset);
-            foreach (int offset in NopSites)
-                yield return string.Format("0x{0:X5}: stb -> nop", offset);
+            foreach (var (offset, stock, deleted) in Edits)
+                yield return string.Format("0x{0:X5}: {1} -> {2}", offset,
+                    BitConverter.ToString(stock), BitConverter.ToString(deleted));
         }
     }
 }
