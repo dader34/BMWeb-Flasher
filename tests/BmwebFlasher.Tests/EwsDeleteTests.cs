@@ -23,22 +23,29 @@ namespace BmwebFlasher.Tests
             !string.IsNullOrEmpty(PatchedPath) && File.Exists(PatchedPath);
 
         [SkippableFact]
-        public void ApplyReproducesKnownGoodImageByteForByte()
+        public void KnownGoodImageIsRecognisedAsAlreadyDeleted()
         {
-            Skip.IfNot(HaveFixtures, "Set MS45_STOCK_BIN and MS45_EWS_BIN to run this.");
+            // MS45_EWS_BIN is a fully-written known-good deleted image (e.g. from
+            // Quickflash, confirmed to start the car). Its flag bytes must read 0
+            // and the class must recognise it as already patched. (A byte-for-byte
+            // reproduce test is not used because a signed known-good image also
+            // differs in the writer-owned signature/checksum blocks, and it must
+            // share the exact same program build as MS45_STOCK_BIN to compare,
+            // which is not guaranteed for an arbitrary donor read.)
+            Skip.IfNot(!string.IsNullOrEmpty(PatchedPath) && File.Exists(PatchedPath),
+                "Set MS45_EWS_BIN to run this.");
 
-            byte[] stock = File.ReadAllBytes(StockPath);
-            byte[] expected = File.ReadAllBytes(PatchedPath);
-
-            byte[] actual = EwsDelete.Apply(stock);
-
-            Assert.Equal(expected.Length, actual.Length);
-            Assert.True(expected.AsSpan().SequenceEqual(actual),
-                "Patched output does not match the known-good image.");
+            byte[] known = File.ReadAllBytes(PatchedPath);
+            Assert.Equal("0044570LO02S", EwsDelete.ReadProgramVersion(known));
+            Assert.Equal(0x00, known[0x48F2C]);
+            Assert.Equal(0x00, known[0x48F3E]);
+            Assert.Equal(0x38, known[0x10A88]); // code patch present in known-good
+            Assert.True(EwsDelete.IsAlreadyPatched(known));
+            Assert.False(EwsDelete.IsApplicable(known));
         }
 
         [SkippableFact]
-        public void ApplyChangesExactlySeventeenBytes()
+        public void ApplyChangesExactlyTheDeleteEdits()
         {
             Skip.IfNot(HaveFixtures, "Set MS45_STOCK_BIN and MS45_EWS_BIN to run this.");
 
@@ -47,13 +54,19 @@ namespace BmwebFlasher.Tests
 
             int changed = 0;
             for (int i = 0; i < stock.Length; i++)
-            {
                 if (stock[i] != actual[i]) changed++;
-            }
 
-            // 5 single-byte immediates + 3 four-byte nops, of which the nop at
-            // 0xD297C differs in 4 bytes and the two at 0xD2C54/58 in 4 each.
-            Assert.Equal(17, changed);
+            // Two flag bytes + a 4-byte code patch = 6 bytes.
+            Assert.Equal(6, changed);
+            Assert.Equal(0x00, actual[0x48F2C]);
+            Assert.Equal(0x00, actual[0x48F3E]);
+            Assert.Equal(0x10, stock[0x48F2C]);
+            Assert.Equal(0x10, stock[0x48F3E]);
+            // code patch li r4,0x22 (38 80 00 22)
+            Assert.Equal(0x38, actual[0x10A88]);
+            Assert.Equal(0x80, actual[0x10A89]);
+            Assert.Equal(0x00, actual[0x10A8A]);
+            Assert.Equal(0x22, actual[0x10A8B]);
         }
 
         [SkippableFact]
@@ -180,5 +193,67 @@ namespace BmwebFlasher.Tests
             Assert.False(EwsDelete.IsAlreadyPatched(blank));
             Assert.Throws<InvalidOperationException>(() => EwsDelete.Apply(blank));
         }
+    
+        // --- Fixture-free synthetic coverage of the two-byte method ---------
+
+        private static byte[] BuildSyntheticStock()
+        {
+            var img = new byte[0x100000];
+            var ver = System.Text.Encoding.ASCII.GetBytes("0044570LO02S");
+            Buffer.BlockCopy(ver, 0, img, 0x6031C, ver.Length);
+            img[0x48F2C] = 0x10;
+            img[0x48F3E] = 0x10;
+            img[0x10A88] = 0x88; img[0x10A89] = 0x8D; img[0x10A8A] = 0x82; img[0x10A8B] = 0x48;
+            return img;
+        }
+
+        [Fact]
+        public void SyntheticApplyFlipsBothFlagsAndNothingElse()
+        {
+            byte[] stock = BuildSyntheticStock();
+            Assert.True(EwsDelete.IsApplicable(stock));
+            Assert.False(EwsDelete.IsAlreadyPatched(stock));
+
+            byte[] patched = EwsDelete.Apply(stock);
+            Assert.Equal(0x00, patched[0x48F2C]);
+            Assert.Equal(0x00, patched[0x48F3E]);
+
+            int changed = 0;
+            for (int i = 0; i < stock.Length; i++)
+                if (stock[i] != patched[i]) changed++;
+            Assert.Equal(6, changed);
+            Assert.Equal(0x38, patched[0x10A88]);
+
+            Assert.True(EwsDelete.IsAlreadyPatched(patched));
+            Assert.False(EwsDelete.IsApplicable(patched));
+        }
+
+        [Fact]
+        public void SyntheticApplyIsIdempotent()
+        {
+            byte[] patched = EwsDelete.Apply(BuildSyntheticStock());
+            byte[] again = EwsDelete.Apply(patched);
+            Assert.True(patched.AsSpan().SequenceEqual(again));
+        }
+
+        [Fact]
+        public void SyntheticWrongVersionIsRefused()
+        {
+            byte[] img = BuildSyntheticStock();
+            var label = System.Text.Encoding.ASCII.GetBytes("0044570LN00S");
+            Buffer.BlockCopy(label, 0, img, 0x6031C, label.Length);
+            Assert.False(EwsDelete.IsApplicable(img));
+            Assert.Throws<InvalidOperationException>(() => EwsDelete.Apply(img));
+        }
+
+        [Fact]
+        public void SyntheticWrongFlagValueIsRefused()
+        {
+            byte[] img = BuildSyntheticStock();
+            img[0x48F2C] = 0x11; // not the expected stock 0x10
+            Assert.False(EwsDelete.IsApplicable(img));
+            Assert.Throws<InvalidOperationException>(() => EwsDelete.Apply(img));
+        }
+
     }
 }
