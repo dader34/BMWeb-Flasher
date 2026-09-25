@@ -1434,15 +1434,33 @@ namespace BmwebFlasher
                         SetStatus("Writing program " + p + "%");
                     });
 
+                    // The erase phase reports no progress: four sector erases
+                    // of a few seconds each with the bar at 0 and the last
+                    // status still reading "unlocked". Turn the writer's log
+                    // notes for that phase into status lines so the wait is
+                    // visibly the erase and not a hang.
+                    int sectorsErased = 0;
+                    int sectorCount = Gs20ProgramWriter.Sectors.Length;
+                    Action<string> writerNote = text =>
+                    {
+                        FlashLog.Note(text);
+                        if (text.StartsWith("erase 0x", StringComparison.Ordinal))
+                            SetStatus("Erasing program sector " + ++sectorsErased + " of " + sectorCount +
+                                      " (a few seconds each, no progress shown)");
+                        else if (text.StartsWith("write ", StringComparison.Ordinal))
+                            SetStatus("Writing program 0%");
+                    };
+
                     await Task.Run(() =>
                     {
                         using (SleepBlocker.Acquire())
                         using (var link = new Ds2SerialLink(Global.Port, FlashLog.Note))
                         {
                             var session = new Gs20CalWriter(link, FlashLog.Note);
-                            var writer = new Gs20ProgramWriter(link, FlashLog.Note);
+                            var writer = new Gs20ProgramWriter(link, writerNote);
 
                             FlashLog.Note("PHASE: session");
+                            SetStatus("Opening transmission session");
                             session.OpenSession();
                             FlashLog.Note("session open");
 
@@ -1468,9 +1486,11 @@ namespace BmwebFlasher
                             }
 
                             FlashLog.Note("PHASE: session + unlock");
+                            SetStatus("Unlocking transmission for programming");
                             session.OpenSession();
                             session.Unlock();
                             FlashLog.Note("unlocked");
+                            SetStatus("Unlocked, checking the module accepts flash commands");
 
                             try
                             {
@@ -3277,6 +3297,13 @@ namespace BmwebFlasher
                     }
                 }
 
+                // Recompute the low-region CRC now, over the post-EWS bytes, so
+                // that if a low-region edit is present (the EWS code patch at
+                // 0x10A88 lives there) the image is internally consistent before
+                // anything is written. This is a no-op on an unpatched low region.
+                if (Global.openedFlash.Length == MS45LowRegion.FullFlashLength)
+                    source = MS45LowRegion.CorrectLowChecksum(source);
+
                 byte[] toFlash = ChecksumsSignatures.CorrectProgramChecksums(source, Global.openedMPC);
                 toFlash = ChecksumsSignatures.SignMS45Program(toFlash, Global.openedMPC).Skip(0x60000).Take(0x9FF40).ToArray();
 
@@ -3293,14 +3320,31 @@ namespace BmwebFlasher
                 }
                 else
                 {
+                    // Low region (file 0x00000-0x3FFFF, CPU 0x2000000). Neither
+                    // original path writes it, so an edit below 0x40000 - the EWS
+                    // code patch at 0x10A88 - would never land. Write it only when
+                    // it actually differs from what is on the module, and only
+                    // behind an explicit brick acknowledgement: this region holds
+                    // startup/boot code and a failed erase here can need BDM
+                    // hardware to recover. It is written before the MPC so a failed
+                    // low-region write aborts before touching the internal flash.
+                    if (success && Global.openedFlash.Length == MS45LowRegion.FullFlashLength)
+                    {
+                        success = await FlashLowRegionIfNeeded(ediabas, source);
+                        if (!success) SetStatus("Low-region flash failed");
+                    }
+
                     // The MPC (internal) write must happen: the program signature
                     // the DME verifies (FLASH_SIGNATUR_PRUEFEN Programm) spans
                     // external + MPC together, so an external-only write leaves
                     // the program invalid ("Programm nicht vorhanden"). There is
                     // no external-only shortcut for a program flash.
-                    FlashLog.Note("PHASE: write internal MPC 0x0..0x6FFFF (brick-capable step)");
-                    SetStatus("Flashing Internal Program");
-                    await Task.Run(() => success = FlashBlock(ediabas, Global.openedMPC, flashMPCStart, flashMPCEnd));
+                    if (success)
+                    {
+                        FlashLog.Note("PHASE: write internal MPC 0x0..0x6FFFF (brick-capable step)");
+                        SetStatus("Flashing Internal Program");
+                        await Task.Run(() => success = FlashBlock(ediabas, Global.openedMPC, flashMPCStart, flashMPCEnd));
+                    }
 
                     if (success)
                     {
@@ -3315,6 +3359,111 @@ namespace BmwebFlasher
             } // FlashLog session
             }
             finally { ShowProgressAsFlashing(false); }
+        }
+
+        /// <summary>
+        /// Erase and write the low region (file 0x00000-0x3FFFF, CPU 0x2000000),
+        /// but only when <paramref name="source"/>'s low region differs from what
+        /// the module currently holds. Returns true when nothing needed writing or
+        /// when the write completed and read back byte-for-byte; false when the
+        /// user declined the brick acknowledgement or a step failed.
+        ///
+        /// This region is not written by any other path and holds startup/boot
+        /// code: a failed or misaligned erase here can leave the DME recoverable
+        /// only with BDM hardware. It is therefore (1) skipped entirely unless a
+        /// low-region edit is actually present, (2) gated behind an explicit typed
+        /// acknowledgement, and (3) read back and compared after the write, so a
+        /// silent mis-write is caught before the flash is called a success. The
+        /// erase geometry (block 0x40000 at base 0x2000000 = the flash's first two
+        /// 0x20000 sectors) is the same flash_loeschen the adjacent regions use.
+        /// </summary>
+        private async Task<bool> FlashLowRegionIfNeeded(EdiabasNet ediabas, byte[] source)
+        {
+            // What is on the module now? If the low region already matches, there
+            // is nothing to write and the brick risk is not worth taking.
+            SetStatus("Checking low region");
+            byte[] onModule = null;
+            await Task.Run(() =>
+                onModule = ReadMemory(ediabas, MS45LowRegion.RegionStart, MS45LowRegion.RegionEnd, "ROMX"));
+
+            if (onModule != null && onModule.Length == MS45LowRegion.RegionLength &&
+                !MS45LowRegion.DiffersFrom(source, PadLowRegion(onModule)))
+            {
+                FlashLog.Note("Low region already matches; skipping low-region erase/write.");
+                return true;
+            }
+
+            byte[] toWrite = MS45LowRegion.Slice(source);
+
+            if (!await ConfirmWithAcknowledgementAsync(
+                    "The image changes the DME's low region (0x00000-0x3FFFF), which holds " +
+                    "startup/boot code. Writing it means erasing and rewriting the first two " +
+                    "flash sectors.\n\n" +
+                    "If this erase or write is interrupted or goes wrong, the DME may be " +
+                    "unrecoverable without BDM hardware. Do this on a bench/donor DME, not a " +
+                    "vehicle you need to drive, and only with the charger connected.",
+                    "I understand this can permanently brick the DME and I have a way to recover it.",
+                    "Flash Low Region"))
+            {
+                SetStatus("Low-region flash cancelled");
+                FlashLog.Note("Low-region write declined at the acknowledgement gate.");
+                return false;
+            }
+
+            bool ok = true;
+            FlashLog.Note("PHASE: erase 2 sectors + write low region 0x2000000..0x203FFFF (brick-capable step)");
+            SetStatus("Erasing Low Region");
+            await Task.Run(() =>
+                ok = EraseECU(ediabas, MS45LowRegion.EraseBlockLength, MS45LowRegion.EraseCpuStart));
+            if (!ok) return false;
+
+            SetStatus("Flashing Low Region");
+            await Task.Run(() =>
+                ok = FlashBlock(ediabas, toWrite, MS45LowRegion.FlashCpuStart, MS45LowRegion.FlashCpuEnd));
+            if (!ok) return false;
+
+            // Read the region straight back and compare. A program signature check
+            // does not cover the low region, so this read-back is the only proof
+            // the bytes actually landed.
+            SetStatus("Verifying Low Region");
+            byte[] readBack = null;
+            await Task.Run(() =>
+                readBack = ReadMemory(ediabas, MS45LowRegion.RegionStart, MS45LowRegion.RegionEnd, "ROMX"));
+
+            if (readBack == null || readBack.Length != toWrite.Length)
+            {
+                FlashLog.Note("Low-region read-back returned " +
+                    (readBack == null ? "nothing" : "0x" + readBack.Length.ToString("X") + " bytes") +
+                    "; expected 0x" + toWrite.Length.ToString("X") + ".");
+                SetStatus("Low-region verify failed (short read)");
+                return false;
+            }
+
+            for (int i = 0; i < toWrite.Length; i++)
+            {
+                if (readBack[i] != toWrite[i])
+                {
+                    FlashLog.Note("Low-region verify mismatch at 0x" + i.ToString("X5") +
+                        ": wrote 0x" + toWrite[i].ToString("X2") + ", read 0x" + readBack[i].ToString("X2") + ".");
+                    SetStatus("Low-region verify failed at 0x" + i.ToString("X5"));
+                    return false;
+                }
+            }
+
+            FlashLog.Note("Low-region write verified (0x" + toWrite.Length.ToString("X") + " bytes read back matched).");
+            SetStatus("Low region verified");
+            return true;
+        }
+
+        // DiffersFrom compares over a full image's offsets; the low-region read
+        // gives just those 0x40000 bytes, so place them at their file offset in a
+        // scratch full-size buffer for the comparison.
+        private static byte[] PadLowRegion(byte[] lowRegion)
+        {
+            byte[] full = new byte[MS45LowRegion.FullFlashLength];
+            Buffer.BlockCopy(lowRegion, 0, full, MS45LowRegion.RegionStart,
+                Math.Min(lowRegion.Length, MS45LowRegion.RegionLength));
+            return full;
         }
 
         /// <summary>

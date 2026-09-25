@@ -18,6 +18,8 @@
     <!-- Link the patch logic directly rather than referencing the Avalonia app,
          so the tests stay headless and do not drag in a UI toolkit. -->
     <Compile Include="..\..\src\BmwebFlasher\EwsDelete.cs" Link="EwsDelete.cs" />
+    <Compile Include="..\..\src\BmwebFlasher\MS45LowRegion.cs" Link="MS45LowRegion.cs" />
+    <Compile Include="..\..\src\BmwebFlasher\Checksums_Signatures.cs" Link="Checksums_Signatures.cs" />
     <Compile Include="..\..\src\BmwebFlasher\Gs20Checksum.cs" Link="Gs20Checksum.cs" />
     <Compile Include="..\..\src\BmwebFlasher\Gs20NoUpshift.cs" Link="Gs20NoUpshift.cs" />
     <Compile Include="..\..\src\BmwebFlasher\Ds2Telegram.cs" Link="Ds2Telegram.cs" />

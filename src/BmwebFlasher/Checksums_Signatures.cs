@@ -23,18 +23,16 @@ namespace BmwebFlasher
 
             BigInteger ToEncrypt = new BigInteger(Append0(hash)); //Need to add a leading zero to hash so that we don't run into +/- issues
             BigInteger Encrypted = BigInteger.ModPow(ToEncrypt, d, n); //RSA encrypt the result (message ^ private exponent % modulus)
-            byte[] encryptedArray = new Byte[64];
-            encryptedArray = Encrypted.ToByteArray(); //Store result in array
+            byte[] encryptedArray = Encrypted64LE(Encrypted); //64 LE bytes, leading-zero safe
             byte[] authPayload = new Byte[65]; //Need to swap endianness
             authPayload[64] = 3;
-
             for (int i = 0; i < 16; ++i)
             {
                 authPayload[0 + 4 * (i)] = encryptedArray[3 + 4 * i];
                 authPayload[1 + 4 * (i)] = encryptedArray[2 + 4 * i];
                 authPayload[2 + 4 * (i)] = encryptedArray[1 + 4 * i];
                 authPayload[3 + 4 * (i)] = encryptedArray[0 + 4 * i];
-            } //Probably a more elegant way to do this
+            }
 
 
 
@@ -143,9 +141,7 @@ namespace BmwebFlasher
 
             BigInteger ToEncrypt = new BigInteger(Append0(hash)); //Need to add a leading zero to hash so that we don't run into +/- issues
             BigInteger Encrypted = BigInteger.ModPow(ToEncrypt, d, n); //Encrypt the result
-            byte[] encryptedArray = new Byte[64];
-            encryptedArray = Encrypted.ToByteArray(); //Store result in array
-
+            byte[] encryptedArray = Encrypted64LE(Encrypted); //64 LE bytes, leading-zero safe
             for (int i = 0; i < 16; ++i)
             {
                 bin[0x174 + 4 * (i)] = encryptedArray[3 + 4 * i];
@@ -186,9 +182,7 @@ namespace BmwebFlasher
 
             BigInteger ToEncrypt = new BigInteger(Append0(hash)); //Need to add a leading zero to hash so that we don't run into +/- issues
             BigInteger Encrypted = BigInteger.ModPow(ToEncrypt, d, n); //Encrypt the result
-            byte[] encryptedArray = new Byte[64];
-            encryptedArray = Encrypted.ToByteArray(); //Store result in array
-
+            byte[] encryptedArray = Encrypted64LE(Encrypted); //64 LE bytes, leading-zero safe
             for (int i = 0; i < 16; ++i)
             {
                 flash[0x60074 + 4 * (i)] = encryptedArray[3 + 4 * i];
@@ -198,6 +192,24 @@ namespace BmwebFlasher
             }
 
             return flash;
+        }
+
+
+        // RSA result to exactly 64 little-endian bytes. BigInteger.ToByteArray()
+        // is little-endian and minimal-length: it drops high zero bytes and may add
+        // a trailing sign byte, so the fixed per-word swap loop below can index past
+        // the end when the encrypted value has leading (high) zero bytes. This pads
+        // to 64 LE bytes so the existing swap logic is unchanged for full-length
+        // values and simply zero-fills the missing high bytes otherwise.
+        private static byte[] Encrypted64LE(BigInteger value)
+        {
+            byte[] le = value.ToByteArray();
+            int len = le.Length;
+            while (len > 64 && le[len - 1] == 0x00) len--; // drop sign/pad byte if it overflows 64
+            if (len > 64) throw new InvalidOperationException("RSA result exceeds 64 bytes (" + len + ").");
+            byte[] enc = new byte[64];
+            Array.Copy(le, 0, enc, 0, len);
+            return enc;
         }
 
         private static byte[] Append0(byte[] array) //Array to BigInt function needs a 0 appended to the result to ensure the value is interpreted as positive
@@ -228,7 +240,14 @@ namespace BmwebFlasher
             return initial;
         }
 
-        private uint Crc32(byte[] buffer, uint initial)
+        // Shared with MS45LowRegion so the low-region checksum recompute uses the
+        // exact same CRC-32 (poly 0x04C11DB7, MSB-first, no final xor) as every
+        // other MS45 checksum, rather than a second copy of the 256-entry table.
+        public static uint Crc32Shared(byte[] buffer, uint initial) => Crc32Impl(buffer, initial);
+
+        private uint Crc32(byte[] buffer, uint initial) => Crc32Impl(buffer, initial);
+
+        private static uint Crc32Impl(byte[] buffer, uint initial)
         {
             uint[] table =
             {
