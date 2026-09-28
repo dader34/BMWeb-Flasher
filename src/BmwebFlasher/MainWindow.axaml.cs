@@ -2483,6 +2483,9 @@ namespace BmwebFlasher
             if (Global.openedFlash == null)
                 return "Load the full binary first, so its program version can be checked.";
 
+            if (Global.openedMPC == null)
+                return "EWS delete is a full-program flash: load the MPC (internal) bin as well.";
+
             string version = EwsDelete.ReadProgramVersion(Global.openedFlash);
 
             if (EwsDelete.IsAlreadyPatched(Global.openedFlash))
@@ -3193,6 +3196,68 @@ namespace BmwebFlasher
                 uint flashStart = 0x2040000;
                 uint flashEnd = 0x205CFFF;
 
+                // Build the calibration slice up front so we can (a) check its EWS
+                // flags and (b) let the user carry an existing EWS delete into it.
+                bool calFromFull = fullBin || Global.openedFlash.Length > 0x40000;
+                byte[] cal = calFromFull
+                    ? Global.openedFlash.Skip(0x40000).Take(0x1D000).ToArray()
+                    : Global.openedFlash.ToArray();
+
+                // If the program already on the DME is EWS-deleted but the tune we
+                // are about to write still carries the stock immobilizer flags, the
+                // flash would re-enable EWS in the calibration while the program
+                // stays deleted - a mismatch that no-starts (EWS fault P1665). Read
+                // the program's two engine-enable bytes and offer to match the tune
+                // to the program. Only meaningful for the supported program version.
+                bool programDeleted = false;
+                if (Global.HW_Ref == "0044570" &&
+                    (Global.Prog_Ref?.Contains(EwsDelete.SupportedProgramVersion) ?? false))
+                {
+                    byte[] progBytes = null;
+                    await Task.Run(() =>
+                        progBytes = ReadMemory(ediabas,
+                            (uint)EwsDelete.ProgramStateOffset, (uint)EwsDelete.ProgramMaskOffset, "ROMX"));
+
+                    if (progBytes != null &&
+                        progBytes.Length == EwsDelete.ProgramMaskOffset - EwsDelete.ProgramStateOffset + 1)
+                    {
+                        byte stateByte = progBytes[0];
+                        byte maskByte = progBytes[progBytes.Length - 1];
+                        programDeleted = EwsDelete.ProgramBytesAreDeleted(stateByte, maskByte);
+                        FlashLog.Note(string.Format(
+                            "Program EWS bytes on DME: 0x{0:X5}={1:X2} 0x{2:X5}={3:X2} -> {4}",
+                            EwsDelete.ProgramStateOffset, stateByte,
+                            EwsDelete.ProgramMaskOffset, maskByte,
+                            programDeleted ? "EWS-DELETED" : "stock/immobilizer-active"));
+                    }
+                    else
+                    {
+                        FlashLog.Note("Could not read the program EWS bytes to check for a tune mismatch; continuing.");
+                    }
+                }
+
+                // The cal buffer is always the 0x40000-partition slice starting at
+                // its own index 0, so calFileOffset is 0 for the flag lookups.
+                if (programDeleted && EwsDelete.CalibrationHasStockImmobilizer(cal, 0))
+                {
+                    bool applyToTune = await ConfirmAsync(
+                        "The current program that is on your DME is EWS deleted, and requires a " +
+                        "matching edit in the tune, would you like to apply the ews delete to the " +
+                        "uploaded tune?",
+                        "EWS Delete Mismatch");
+
+                    if (applyToTune)
+                    {
+                        cal = EwsDelete.ApplyCalibrationDelete(cal, 0);
+                        FlashLog.Note("Applied cal EWS delete to the tune to match the EWS-deleted program.");
+                        SetStatus("Matched tune to EWS-deleted program");
+                    }
+                    else
+                    {
+                        FlashLog.Note("User declined matching the tune to the EWS-deleted program; the car may not start.");
+                    }
+                }
+
                 if (Global.diagProtocol == "BMW-FAST")
                 {
                     if (!ExecuteJob(ediabas, "normaler_datenverkehr", "nein;nein;ja")) return;
@@ -3203,13 +3268,7 @@ namespace BmwebFlasher
                 await Task.Run(() => success = EraseECU(ediabas, eraseBlock, eraseStart));
                 if (!success) return;
 
-                byte[] toFlash;
-
-                if (fullBin || Global.openedFlash.Length > 0x40000)
-                    toFlash = Global.openedFlash.Skip(0x40000).Take(0x1D000).ToArray();
-                else
-                    toFlash = Global.openedFlash.ToArray();
-
+                byte[] toFlash = cal;
                 toFlash = ChecksumsSignatures.CorrectParameterChecksums(toFlash);
                 toFlash = ChecksumsSignatures.SignMS45Parameters(toFlash);
 
@@ -3274,20 +3333,22 @@ namespace BmwebFlasher
                     if (!ExecuteJob(ediabas, "normaler_datenverkehr", "ja;nein;nein")) return;
                 }
 
-                FlashLog.Note("PHASE: erase program region 0x2060000 block 0xA0000");
-                SetStatus("Erasing Flash");
-                await Task.Run(() => success = EraseECU(ediabas, eraseBlock, eraseStart));
-                if (!success) return;
-
-                // The EWS patch edits program bytes, so it has to happen before
-                // checksums and signing are computed over them.
+                // The EWS delete edits BOTH partitions: program bytes (0xDB1C7/
+                // 0xDB1D3) and calibration flags (0x48F2C/0x48F3E). Apply it to the
+                // full image before any checksum/signature is computed, so both the
+                // program and the (below) calibration slices carry the edits. Both
+                // must reach the car - a program-only write leaves the immobilizer
+                // active and the car cranks-no-start with EWS fault P1665.
+                bool ewsDelete = EwsDelete_CheckBox.IsChecked == true;
                 byte[] source = Global.openedFlash;
-                if (EwsDelete_CheckBox.IsChecked == true)
+                if (ewsDelete)
                 {
                     try
                     {
                         source = EwsDelete.Apply(source);
                         SetStatus("Applied EWS delete");
+                        foreach (string line in EwsDelete.Describe())
+                            FlashLog.Note("EWS delete edit: " + line);
                     }
                     catch (Exception ex)
                     {
@@ -3297,15 +3358,21 @@ namespace BmwebFlasher
                     }
                 }
 
-                // Recompute the low-region CRC now, over the post-EWS bytes, so
-                // that if a low-region edit is present (the EWS code patch at
-                // 0x10A88 lives there) the image is internally consistent before
-                // anything is written. This is a no-op on an unpatched low region.
-                if (Global.openedFlash.Length == MS45LowRegion.FullFlashLength)
-                    source = MS45LowRegion.CorrectLowChecksum(source);
-
                 byte[] toFlash = ChecksumsSignatures.CorrectProgramChecksums(source, Global.openedMPC);
                 toFlash = ChecksumsSignatures.SignMS45Program(toFlash, Global.openedMPC).Skip(0x60000).Take(0x9FF40).ToArray();
+
+                // flash_loeschen erases exactly the start/length it is given - it
+                // does NOT wipe the whole program space (proven on the car: an
+                // erase of 0x2060000 len 0xA0000 covers 0x2060000..0x2100000 and
+                // leaves 0x2000000 intact). The DME's flash driver also refuses a
+                // requestDownload (0x34) to any sector that has not been erased,
+                // answering NRC 0x40 downloadNotAccepted. So the region we intend
+                // to write must get its own flash_loeschen, up front, before the
+                // write.
+                FlashLog.Note("PHASE: erase program region 0x2060000 block 0xA0000");
+                SetStatus("Erasing Flash");
+                await Task.Run(() => success = EraseECU(ediabas, eraseBlock, eraseStart));
+                if (!success) { SetStatus("Flash failed"); return; }
 
                 FlashLog.Note("PHASE: write external program 0x2060000..0x20FFF3F");
                 SetStatus("Flashing External Program");
@@ -3320,20 +3387,6 @@ namespace BmwebFlasher
                 }
                 else
                 {
-                    // Low region (file 0x00000-0x3FFFF, CPU 0x2000000). Neither
-                    // original path writes it, so an edit below 0x40000 - the EWS
-                    // code patch at 0x10A88 - would never land. Write it only when
-                    // it actually differs from what is on the module, and only
-                    // behind an explicit brick acknowledgement: this region holds
-                    // startup/boot code and a failed erase here can need BDM
-                    // hardware to recover. It is written before the MPC so a failed
-                    // low-region write aborts before touching the internal flash.
-                    if (success && Global.openedFlash.Length == MS45LowRegion.FullFlashLength)
-                    {
-                        success = await FlashLowRegionIfNeeded(ediabas, source);
-                        if (!success) SetStatus("Low-region flash failed");
-                    }
-
                     // The MPC (internal) write must happen: the program signature
                     // the DME verifies (FLASH_SIGNATUR_PRUEFEN Programm) spans
                     // external + MPC together, so an external-only write leaves
@@ -3346,10 +3399,59 @@ namespace BmwebFlasher
                         await Task.Run(() => success = FlashBlock(ediabas, Global.openedMPC, flashMPCStart, flashMPCEnd));
                     }
 
+                    // A full-program image also carries the calibration (Daten,
+                    // 0x40000-0x5CFFF). A working full flash writes it as a third
+                    // segment (program 0x2060000, MPC 0x0,
+                    // cal 0x2040000). Always write it when the loaded image is a
+                    // full 1 MB bin, so the calibration on the car matches the file
+                    // - and so an EWS delete's calibration flags (0x48F2C/0x48F3E)
+                    // actually land, since they live here and the program write does
+                    // not cover them.
+                    bool hasCal = Global.openedFlash != null && Global.openedFlash.Length >= 0x5D000;
+                    if (success && hasCal)
+                    {
+                        uint calEraseStart = 0x2040000;
+                        uint calEraseBlock = 0x20000;
+                        uint calFlashStart = 0x2040000;
+                        uint calFlashEnd = 0x205CFFF;
+
+                        byte[] calFlash = source.Skip(0x40000).Take(0x1D000).ToArray();
+                        calFlash = ChecksumsSignatures.CorrectParameterChecksums(calFlash);
+                        calFlash = ChecksumsSignatures.SignMS45Parameters(calFlash);
+
+                        FlashLog.Note("PHASE: erase calibration 0x2040000 block 0x20000");
+                        SetStatus("Erasing Calibration");
+                        await Task.Run(() => success = EraseECU(ediabas, calEraseBlock, calEraseStart));
+
+                        if (success)
+                        {
+                            FlashLog.Note("PHASE: write calibration 0x2040000..0x205CFFF");
+                            SetStatus("Flashing Calibration");
+                            await Task.Run(() => success = FlashBlock(ediabas, calFlash, calFlashStart, calFlashEnd));
+                        }
+                    }
+
+                    // Verify both partitions, then reset once at the end. A working
+                    // flash checks Programm and Daten back-to-back and resets the
+                    // ECU a single time - resetting between them would drop the
+                    // programming session before the second area is verified. When
+                    // no calibration was written, only Programm is verified (and it
+                    // resets).
                     if (success)
                     {
-                        await Task.Run(() => success = FinishFlash(ediabas, "Programm"));
+                        bool resetAfterProgram = !hasCal;
+                        await Task.Run(() => success = FinishFlash(ediabas, "Programm", resetAfterProgram));
+                        if (!success) SetStatus("Flash failed");
+                    }
+
+                    if (success && hasCal)
+                    {
+                        await Task.Run(() => success = FinishFlash(ediabas, "Daten"));
                         SetStatus(success ? "Flash successful" : "Flash failed");
+                    }
+                    else if (success)
+                    {
+                        SetStatus("Flash successful");
                     }
                 }
             }
@@ -3362,116 +3464,11 @@ namespace BmwebFlasher
         }
 
         /// <summary>
-        /// Erase and write the low region (file 0x00000-0x3FFFF, CPU 0x2000000),
-        /// but only when <paramref name="source"/>'s low region differs from what
-        /// the module currently holds. Returns true when nothing needed writing or
-        /// when the write completed and read back byte-for-byte; false when the
-        /// user declined the brick acknowledgement or a step failed.
-        ///
-        /// This region is not written by any other path and holds startup/boot
-        /// code: a failed or misaligned erase here can leave the DME recoverable
-        /// only with BDM hardware. It is therefore (1) skipped entirely unless a
-        /// low-region edit is actually present, (2) gated behind an explicit typed
-        /// acknowledgement, and (3) read back and compared after the write, so a
-        /// silent mis-write is caught before the flash is called a success. The
-        /// erase geometry (block 0x40000 at base 0x2000000 = the flash's first two
-        /// 0x20000 sectors) is the same flash_loeschen the adjacent regions use.
-        /// </summary>
-        private async Task<bool> FlashLowRegionIfNeeded(EdiabasNet ediabas, byte[] source)
-        {
-            // What is on the module now? If the low region already matches, there
-            // is nothing to write and the brick risk is not worth taking.
-            SetStatus("Checking low region");
-            byte[] onModule = null;
-            await Task.Run(() =>
-                onModule = ReadMemory(ediabas, MS45LowRegion.RegionStart, MS45LowRegion.RegionEnd, "ROMX"));
-
-            if (onModule != null && onModule.Length == MS45LowRegion.RegionLength &&
-                !MS45LowRegion.DiffersFrom(source, PadLowRegion(onModule)))
-            {
-                FlashLog.Note("Low region already matches; skipping low-region erase/write.");
-                return true;
-            }
-
-            byte[] toWrite = MS45LowRegion.Slice(source);
-
-            if (!await ConfirmWithAcknowledgementAsync(
-                    "The image changes the DME's low region (0x00000-0x3FFFF), which holds " +
-                    "startup/boot code. Writing it means erasing and rewriting the first two " +
-                    "flash sectors.\n\n" +
-                    "If this erase or write is interrupted or goes wrong, the DME may be " +
-                    "unrecoverable without BDM hardware. Do this on a bench/donor DME, not a " +
-                    "vehicle you need to drive, and only with the charger connected.",
-                    "I understand this can permanently brick the DME and I have a way to recover it.",
-                    "Flash Low Region"))
-            {
-                SetStatus("Low-region flash cancelled");
-                FlashLog.Note("Low-region write declined at the acknowledgement gate.");
-                return false;
-            }
-
-            bool ok = true;
-            FlashLog.Note("PHASE: erase 2 sectors + write low region 0x2000000..0x203FFFF (brick-capable step)");
-            SetStatus("Erasing Low Region");
-            await Task.Run(() =>
-                ok = EraseECU(ediabas, MS45LowRegion.EraseBlockLength, MS45LowRegion.EraseCpuStart));
-            if (!ok) return false;
-
-            SetStatus("Flashing Low Region");
-            await Task.Run(() =>
-                ok = FlashBlock(ediabas, toWrite, MS45LowRegion.FlashCpuStart, MS45LowRegion.FlashCpuEnd));
-            if (!ok) return false;
-
-            // Read the region straight back and compare. A program signature check
-            // does not cover the low region, so this read-back is the only proof
-            // the bytes actually landed.
-            SetStatus("Verifying Low Region");
-            byte[] readBack = null;
-            await Task.Run(() =>
-                readBack = ReadMemory(ediabas, MS45LowRegion.RegionStart, MS45LowRegion.RegionEnd, "ROMX"));
-
-            if (readBack == null || readBack.Length != toWrite.Length)
-            {
-                FlashLog.Note("Low-region read-back returned " +
-                    (readBack == null ? "nothing" : "0x" + readBack.Length.ToString("X") + " bytes") +
-                    "; expected 0x" + toWrite.Length.ToString("X") + ".");
-                SetStatus("Low-region verify failed (short read)");
-                return false;
-            }
-
-            for (int i = 0; i < toWrite.Length; i++)
-            {
-                if (readBack[i] != toWrite[i])
-                {
-                    FlashLog.Note("Low-region verify mismatch at 0x" + i.ToString("X5") +
-                        ": wrote 0x" + toWrite[i].ToString("X2") + ", read 0x" + readBack[i].ToString("X2") + ".");
-                    SetStatus("Low-region verify failed at 0x" + i.ToString("X5"));
-                    return false;
-                }
-            }
-
-            FlashLog.Note("Low-region write verified (0x" + toWrite.Length.ToString("X") + " bytes read back matched).");
-            SetStatus("Low region verified");
-            return true;
-        }
-
-        // DiffersFrom compares over a full image's offsets; the low-region read
-        // gives just those 0x40000 bytes, so place them at their file offset in a
-        // scratch full-size buffer for the comparison.
-        private static byte[] PadLowRegion(byte[] lowRegion)
-        {
-            byte[] full = new byte[MS45LowRegion.FullFlashLength];
-            Buffer.BlockCopy(lowRegion, 0, full, MS45LowRegion.RegionStart,
-                Math.Min(lowRegion.Length, MS45LowRegion.RegionLength));
-            return full;
-        }
-
-        /// <summary>
         /// The post-flash sequence shared by the tune and full-program paths:
         /// drop back to normal comms, verify the signature, reset the ECU.
         /// It was duplicated verbatim in both flash methods upstream.
         /// </summary>
-        private bool FinishFlash(EdiabasNet ediabas, string signatureArea)
+        private bool FinishFlash(EdiabasNet ediabas, string signatureArea, bool resetEcu = true)
         {
             if (Global.diagProtocol != "BMW-FAST")
             {
@@ -3495,6 +3492,13 @@ namespace BmwebFlasher
             }
 
             if (!ExecuteJob(ediabas, "FLASH_PROGRAMMIER_STATUS_LESEN", String.Empty)) return false;
+
+            // When several partitions are written in one session (program + data
+            // for an EWS delete), each is signature-checked but only the last
+            // resets the ECU - a mid-sequence reset would drop the programming
+            // session before the remaining partition is verified.
+            if (!resetEcu)
+                return true;
 
             SetStatus("Resetting ECU");
             return ExecuteJob(ediabas, "STEUERGERAETE_RESET", String.Empty);

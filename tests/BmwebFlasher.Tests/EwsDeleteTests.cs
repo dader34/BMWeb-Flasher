@@ -39,7 +39,8 @@ namespace BmwebFlasher.Tests
             Assert.Equal("0044570LO02S", EwsDelete.ReadProgramVersion(known));
             Assert.Equal(0x00, known[0x48F2C]);
             Assert.Equal(0x00, known[0x48F3E]);
-            Assert.Equal(0x38, known[0x10A88]); // code patch present in known-good
+            Assert.Equal(0x00, known[0xDB1C7]); // program engine-enable state cleared
+            Assert.Equal(0x00, known[0xDB1D3]); // program engine-enable mask cleared
             Assert.True(EwsDelete.IsAlreadyPatched(known));
             Assert.False(EwsDelete.IsApplicable(known));
         }
@@ -56,17 +57,17 @@ namespace BmwebFlasher.Tests
             for (int i = 0; i < stock.Length; i++)
                 if (stock[i] != actual[i]) changed++;
 
-            // Two flag bytes + a 4-byte code patch = 6 bytes.
-            Assert.Equal(6, changed);
+            // Two calibration flags + two program bytes = 4 bytes.
+            Assert.Equal(4, changed);
             Assert.Equal(0x00, actual[0x48F2C]);
             Assert.Equal(0x00, actual[0x48F3E]);
             Assert.Equal(0x10, stock[0x48F2C]);
             Assert.Equal(0x10, stock[0x48F3E]);
-            // code patch li r4,0x22 (38 80 00 22)
-            Assert.Equal(0x38, actual[0x10A88]);
-            Assert.Equal(0x80, actual[0x10A89]);
-            Assert.Equal(0x00, actual[0x10A8A]);
-            Assert.Equal(0x22, actual[0x10A8B]);
+            // program engine-enable bytes cleared (01/3F -> 00/00)
+            Assert.Equal(0x00, actual[0xDB1C7]);
+            Assert.Equal(0x00, actual[0xDB1D3]);
+            Assert.Equal(0x01, stock[0xDB1C7]);
+            Assert.Equal(0x3F, stock[0xDB1D3]);
         }
 
         [SkippableFact]
@@ -203,7 +204,8 @@ namespace BmwebFlasher.Tests
             Buffer.BlockCopy(ver, 0, img, 0x6031C, ver.Length);
             img[0x48F2C] = 0x10;
             img[0x48F3E] = 0x10;
-            img[0x10A88] = 0x88; img[0x10A89] = 0x8D; img[0x10A8A] = 0x82; img[0x10A8B] = 0x48;
+            img[0xDB1C7] = 0x01;
+            img[0xDB1D3] = 0x3F;
             return img;
         }
 
@@ -221,8 +223,9 @@ namespace BmwebFlasher.Tests
             int changed = 0;
             for (int i = 0; i < stock.Length; i++)
                 if (stock[i] != patched[i]) changed++;
-            Assert.Equal(6, changed);
-            Assert.Equal(0x38, patched[0x10A88]);
+            Assert.Equal(4, changed);
+            Assert.Equal(0x00, patched[0xDB1C7]);
+            Assert.Equal(0x00, patched[0xDB1D3]);
 
             Assert.True(EwsDelete.IsAlreadyPatched(patched));
             Assert.False(EwsDelete.IsApplicable(patched));
@@ -253,6 +256,59 @@ namespace BmwebFlasher.Tests
             img[0x48F2C] = 0x11; // not the expected stock 0x10
             Assert.False(EwsDelete.IsApplicable(img));
             Assert.Throws<InvalidOperationException>(() => EwsDelete.Apply(img));
+        }
+
+        // --- Program/tune mismatch detection (tune-only flash guard) ---------
+
+        [Fact]
+        public void ProgramBytesAreDeletedRecognisesBothStates()
+        {
+            Assert.True(EwsDelete.ProgramBytesAreDeleted(0x00, 0x00));
+            Assert.False(EwsDelete.ProgramBytesAreDeleted(0x01, 0x3F)); // stock
+            Assert.False(EwsDelete.ProgramBytesAreDeleted(0x00, 0x3F)); // half
+            Assert.False(EwsDelete.ProgramBytesAreDeleted(0x01, 0x00)); // half
+        }
+
+        [Fact]
+        public void CalibrationImmobilizerStateIsDetectedInAFullImage()
+        {
+            byte[] stock = BuildSyntheticStock();
+            Assert.True(EwsDelete.CalibrationHasStockImmobilizer(stock, 0x40000));
+            Assert.False(EwsDelete.CalibrationHasDeletedImmobilizer(stock, 0x40000));
+
+            byte[] deleted = EwsDelete.Apply(stock);
+            Assert.False(EwsDelete.CalibrationHasStockImmobilizer(deleted, 0x40000));
+            Assert.True(EwsDelete.CalibrationHasDeletedImmobilizer(deleted, 0x40000));
+        }
+
+        [Fact]
+        public void CalibrationImmobilizerStateIsDetectedInABareSlice()
+        {
+            var slice = new byte[0x1D000];
+            slice[0x48F2C - 0x40000] = 0x10;
+            slice[0x48F3E - 0x40000] = 0x10;
+            Assert.True(EwsDelete.CalibrationHasStockImmobilizer(slice, 0));
+
+            byte[] matched = EwsDelete.ApplyCalibrationDelete(slice, 0);
+            Assert.Equal(0x00, matched[0x48F2C - 0x40000]);
+            Assert.Equal(0x00, matched[0x48F3E - 0x40000]);
+            Assert.True(EwsDelete.CalibrationHasDeletedImmobilizer(matched, 0));
+            Assert.Equal(0x10, slice[0x48F2C - 0x40000]);
+        }
+
+        [Fact]
+        public void ApplyCalibrationDeleteChangesOnlyTheTwoFlags()
+        {
+            byte[] stock = BuildSyntheticStock();
+            byte[] matched = EwsDelete.ApplyCalibrationDelete(stock, 0x40000);
+            int changed = 0;
+            for (int i = 0; i < stock.Length; i++)
+                if (stock[i] != matched[i]) changed++;
+            Assert.Equal(2, changed);
+            Assert.Equal(0x00, matched[0x48F2C]);
+            Assert.Equal(0x00, matched[0x48F3E]);
+            Assert.Equal(stock[0xDB1C7], matched[0xDB1C7]);
+            Assert.Equal(stock[0xDB1D3], matched[0xDB1D3]);
         }
 
     }

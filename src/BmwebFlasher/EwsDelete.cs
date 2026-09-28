@@ -4,56 +4,70 @@ using System.Collections.Generic;
 namespace BmwebFlasher
 {
     /// <summary>
-    /// EWS (immobilizer) delete for the MS45.1 external flash.
+    /// EWS (immobilizer) delete for the MS45.1 external flash, program 0044570LO02S.
     ///
-    /// The delete is three edits in the external image:
+    /// The delete is four functional bytes, split across two flash partitions:
     ///
-    ///   0x48F2C : 0x10 (EWS active) -> 0x00 (EWS off)         calibration flag
-    ///   0x48F3E : 0x10 (EWS active) -> 0x00 (EWS off)         calibration flag
-    ///   0x10A88 : 88 8D 82 48 -> 38 80 00 22                  code patch
+    ///   calibration (Daten, 0x40000-0x5CFFF):
+    ///     0x48F2C : 0x10 -> 0x00     fmy_id_imob_2.c_err_clas (immobilizer error class)
+    ///     0x48F3E : 0x10 -> 0x00     fmy_id_imob_3.c_err_clas (immobilizer error class)
     ///
-    /// The two flag bytes disable the EWS-active calibration flags. The code
-    /// patch at 0x10A88 replaces `lbz r4,-0x7DB8(r13)` (read the EWS status
-    /// byte from RAM) with `li r4,0x22` (load a fixed non-zero constant), so the
-    /// status check right after it always takes the pass path. All three are
-    /// needed: with only the flags cleared the flash completes but the car still
-    /// cranks-no-start, because the dynamic check at 0x10A88 still runs.
+    ///   program (0x60000-0xFFF3F):
+    ///     0xDB1C7 : 0x01 -> 0x00     immobilizer engine-enable state byte
+    ///     0xDB1D3 : 0x3F -> 0x00     immobilizer engine-enable cylinder mask (0x3F = 6 cyl)
     ///
-    /// Derived 2026-09-25 by diffing a known-good EWS-deleted image (produced by
-    /// a known-good source and confirmed to start the car) against the donor's
-    /// stock external image: after the RSA-signature and checksum blocks are
-    /// discounted (the writer recomputes those), the only functional change is
-    /// these two bytes. The MPC internal flash is NOT touched by the delete.
+    /// Both partitions must be written for the car to start. Verified 2026-09-27
+    /// by diffing two same-session full reads from the same car, same program
+    /// build: a WinKFP flash that left the program bytes at their stock 0x01/0x3F
+    /// cranked-no-start and logged EWS fault P1665 ("Manipulation ueber
+    /// Wechselcode"); a reflash of the same car with the program bytes at
+    /// 0x00/0x00 started and ran. The two calibration flags were 0x00/0x00 in
+    /// both reads, so they are necessary but not sufficient on their own - the
+    /// program bytes are the part a program-only edit must not miss.
     ///
-    /// This is MS45.1 program 0044570LO02S only. Both offsets are absolute
-    /// positions in the 0x100000 external flash image, and both must read the
-    /// expected stock value 0x10 before the delete is applied, so it cannot land
-    /// on an image whose layout differs.
+    /// NOT part of the delete (verified, do not touch here):
+    ///   - 0x10A88 (low region): a service-0x22 read-permission lock, unrelated to
+    ///     EWS, and unwritable over the diagnostic path anyway (the bootloader
+    ///     rejects a low-region erase with NRC 0x22). An earlier version of this
+    ///     file wrongly listed it as an EWS edit; it is removed.
+    ///   - the MPC internal flash is not touched by the delete.
+    ///
+    /// To REMOVE an EWS delete, flash a stock .0PA/.0DA (immobilizer active by
+    /// default) - there is no separate restore path here.
+    ///
+    /// Gated on the exact program version: other MS45.1 programs lay calibration
+    /// and code out differently, and every offset must read its expected stock
+    /// value before the delete is applied, so it cannot land on a mismatched image.
     /// </summary>
     public static class EwsDelete
     {
         /// <summary>Expected size of a full external flash image.</summary>
         public const int FullFlashLength = 0x100000;
 
+        /// <summary>First file offset of the calibration (Daten) partition.</summary>
+        public const int CalibrationStart = 0x40000;
+
+        /// <summary>First file offset of the program partition.</summary>
+        public const int ProgramStart = 0x60000;
+
         /// <summary>
         /// The program version string, at 0x6031C in the external image.
-        /// The flag offsets were derived against this version only. Other
-        /// MS45.1 programs lay their calibration out differently, so the version
-        /// - not just the 0044570 hardware reference - is what gates this.
+        /// The offsets were derived against this version only.
         /// </summary>
         public const string SupportedProgramVersion = "0044570LO02S";
 
         private const int ProgramVersionOffset = 0x6031C;
 
         /// <summary>
-        /// The delete edits: (offset, expected stock bytes, replacement bytes).
-        /// Two single-byte calibration flags and one 4-byte code patch.
+        /// The delete edits: (offset, expected stock bytes, deleted bytes).
+        /// Two calibration flags and two program bytes.
         /// </summary>
         private static readonly (int Offset, byte[] Stock, byte[] Deleted)[] Edits =
         {
-            (0x48F2C, new byte[] { 0x10 }, new byte[] { 0x00 }),
-            (0x48F3E, new byte[] { 0x10 }, new byte[] { 0x00 }),
-            (0x10A88, new byte[] { 0x88, 0x8D, 0x82, 0x48 }, new byte[] { 0x38, 0x80, 0x00, 0x22 }),
+            (0x48F2C, new byte[] { 0x10 }, new byte[] { 0x00 }), // cal imob_2 error class
+            (0x48F3E, new byte[] { 0x10 }, new byte[] { 0x00 }), // cal imob_3 error class
+            (0xDB1C7, new byte[] { 0x01 }, new byte[] { 0x00 }), // prog engine-enable state
+            (0xDB1D3, new byte[] { 0x3F }, new byte[] { 0x00 }), // prog engine-enable mask
         };
 
         /// <summary>
@@ -77,9 +91,9 @@ namespace BmwebFlasher
         }
 
         /// <summary>
-        /// True when this looks like an unpatched MS45.1 external image the
-        /// delete can be applied to: right size, right program version, and both
-        /// flag bytes still at their stock 0x10.
+        /// True when this looks like an unpatched MS45.1 image the delete can be
+        /// applied to: right size, right program version, and every edit byte still
+        /// at its stock value.
         /// </summary>
         public static bool IsApplicable(byte[] flash)
         {
@@ -121,9 +135,10 @@ namespace BmwebFlasher
         }
 
         /// <summary>
-        /// Returns a copy with the EWS delete applied. The caller's array is left
-        /// alone. Checksums and the RSA signature are corrected by the writer on
-        /// the way to the car, not here.
+        /// Returns a copy with the EWS delete applied across both partitions. The
+        /// caller's array is left alone. Checksums and RSA signatures for both the
+        /// program and the calibration are recomputed by the writer, not here - the
+        /// caller must sign/checksum both partitions after this.
         /// </summary>
         public static byte[] Apply(byte[] flash)
         {
@@ -151,8 +166,8 @@ namespace BmwebFlasher
                 }
 
                 throw new InvalidOperationException(
-                    "This image is the right program version but the EWS flag bytes are not at " +
-                    "their expected stock value, so it may already be modified. Refusing to patch.");
+                    "This image is the right program version but its EWS bytes are not at their " +
+                    "expected stock values, so it may already be modified. Refusing to patch.");
             }
 
             byte[] patched = (byte[])flash.Clone();
@@ -161,12 +176,83 @@ namespace BmwebFlasher
             return patched;
         }
 
+        /// <summary>
+        /// The program bytes that a live ECU read can be checked against to tell
+        /// whether the program currently on the module is EWS-deleted. Exposed so a
+        /// tune-only flash can detect a program/calibration EWS mismatch (a deleted
+        /// program with a stock-immobilizer tune re-enables EWS and no-starts).
+        /// </summary>
+        public const int ProgramStateOffset = 0xDB1C7;
+        public const int ProgramMaskOffset = 0xDB1D3;
+
+        /// <summary>
+        /// True when the two program engine-enable bytes read back as their
+        /// deleted values (both 0x00). The caller supplies the bytes it read from
+        /// the ECU at <see cref="ProgramStateOffset"/> and <see cref="ProgramMaskOffset"/>.
+        /// </summary>
+        public static bool ProgramBytesAreDeleted(byte stateByte, byte maskByte)
+            => stateByte == 0x00 && maskByte == 0x00;
+
+        /// <summary>File offset of the immobilizer error-class flags in the cal.</summary>
+        public const int CalFlag2Offset = 0x48F2C;
+        public const int CalFlag3Offset = 0x48F3E;
+
+        /// <summary>
+        /// True when a calibration slice (a 0x1D000-byte Daten partition starting
+        /// at file 0x40000, or a full image) still carries the STOCK immobilizer
+        /// flags (0x10) - i.e. flashing it would re-enable EWS.
+        /// <paramref name="calFileOffset"/> is where the 0x40000 partition sits in
+        /// the given buffer (0 for a bare 0x1D000 slice, 0x40000 for a full image).
+        /// </summary>
+        public static bool CalibrationHasStockImmobilizer(byte[] cal, int calFileOffset)
+        {
+            int f2 = CalFlag2Offset - CalibrationStart + calFileOffset;
+            int f3 = CalFlag3Offset - CalibrationStart + calFileOffset;
+            if (cal == null || f3 >= cal.Length) return false;
+            return cal[f2] == 0x10 && cal[f3] == 0x10;
+        }
+
+        /// <summary>
+        /// True when the cal already carries the deleted immobilizer flags (0x00).
+        /// </summary>
+        public static bool CalibrationHasDeletedImmobilizer(byte[] cal, int calFileOffset)
+        {
+            int f2 = CalFlag2Offset - CalibrationStart + calFileOffset;
+            int f3 = CalFlag3Offset - CalibrationStart + calFileOffset;
+            if (cal == null || f3 >= cal.Length) return false;
+            return cal[f2] == 0x00 && cal[f3] == 0x00;
+        }
+
+        /// <summary>
+        /// Clears the two immobilizer flags in a calibration buffer (the cal half
+        /// of the EWS delete), leaving the caller's array alone. Use when the
+        /// program on the ECU is already EWS-deleted so the tune matches it.
+        /// <paramref name="calFileOffset"/> as in CalibrationHasStockImmobilizer.
+        /// Checksums/signature must be recomputed by the caller afterward.
+        /// </summary>
+        public static byte[] ApplyCalibrationDelete(byte[] cal, int calFileOffset)
+        {
+            if (cal == null)
+                throw new ArgumentNullException(nameof(cal));
+            int f2 = CalFlag2Offset - CalibrationStart + calFileOffset;
+            int f3 = CalFlag3Offset - CalibrationStart + calFileOffset;
+            if (f3 >= cal.Length)
+                throw new InvalidOperationException("Calibration buffer too small for the EWS flag offsets.");
+            byte[] copy = (byte[])cal.Clone();
+            copy[f2] = 0x00;
+            copy[f3] = 0x00;
+            return copy;
+        }
+
         /// <summary>Human-readable list of the edits, for logging before a flash.</summary>
         public static IEnumerable<string> Describe()
         {
             foreach (var (offset, stock, deleted) in Edits)
-                yield return string.Format("0x{0:X5}: {1} -> {2}", offset,
+            {
+                string part = offset >= ProgramStart ? "prog" : "cal";
+                yield return string.Format("{0} 0x{1:X5}: {2} -> {3}", part, offset,
                     BitConverter.ToString(stock), BitConverter.ToString(deleted));
+            }
         }
     }
 }
