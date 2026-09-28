@@ -240,11 +240,6 @@ namespace BmwebFlasher
             return initial;
         }
 
-        // Shared with MS45LowRegion so the low-region checksum recompute uses the
-        // exact same CRC-32 (poly 0x04C11DB7, MSB-first, no final xor) as every
-        // other MS45 checksum, rather than a second copy of the 256-entry table.
-        public static uint Crc32Shared(byte[] buffer, uint initial) => Crc32Impl(buffer, initial);
-
         private uint Crc32(byte[] buffer, uint initial) => Crc32Impl(buffer, initial);
 
         private static uint Crc32Impl(byte[] buffer, uint initial)
