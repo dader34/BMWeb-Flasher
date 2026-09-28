@@ -25,9 +25,9 @@ namespace BmwebFlasher.Tests
         [SkippableFact]
         public void KnownGoodImageIsRecognisedAsAlreadyDeleted()
         {
-            // MS45_EWS_BIN is a fully-written known-good deleted image (e.g. from
-            // confirmed to start the car). Its flag bytes must read 0
-            // and the class must recognise it as already patched. (A byte-for-byte
+            // MS45_EWS_BIN is a fully-written known-good deleted image, confirmed
+            // to start the car. Its flag bytes must read 0 and the class must
+            // recognise it as already patched. (A byte-for-byte
             // reproduce test is not used because a signed known-good image also
             // differs in the writer-owned signature/checksum blocks, and it must
             // share the exact same program build as MS45_STOCK_BIN to compare,

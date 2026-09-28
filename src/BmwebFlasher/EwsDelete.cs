@@ -18,12 +18,12 @@ namespace BmwebFlasher
     ///
     /// Both partitions must be written for the car to start. Verified 2026-09-27
     /// by diffing two same-session full reads from the same car, same program
-    /// build: a WinKFP flash that left the program bytes at their stock 0x01/0x3F
+    /// build: a flash that left the program bytes at their stock 0x01/0x3F
     /// cranked-no-start and logged EWS fault P1665 ("Manipulation ueber
-    /// Wechselcode"); a reflash of the same car with the program bytes at
-    /// 0x00/0x00 started and ran. The two calibration flags were 0x00/0x00 in
-    /// both reads, so they are necessary but not sufficient on their own - the
-    /// program bytes are the part a program-only edit must not miss.
+    /// Wechselcode"); a flash of the same car with the program bytes at 0x00/0x00
+    /// started and ran. The two calibration flags were 0x00/0x00 in both reads,
+    /// so they are necessary but not sufficient on their own - the program bytes
+    /// are the part a program-only edit must not miss.
     ///
     /// NOT part of the delete (verified, do not touch here):
     ///   - 0x10A88 (low region): a service-0x22 read-permission lock, unrelated to

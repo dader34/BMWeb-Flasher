@@ -3401,12 +3401,11 @@ namespace BmwebFlasher
 
                     // A full-program image also carries the calibration (Daten,
                     // 0x40000-0x5CFFF). A working full flash writes it as a third
-                    // segment (program 0x2060000, MPC 0x0,
-                    // cal 0x2040000). Always write it when the loaded image is a
-                    // full 1 MB bin, so the calibration on the car matches the file
-                    // - and so an EWS delete's calibration flags (0x48F2C/0x48F3E)
-                    // actually land, since they live here and the program write does
-                    // not cover them.
+                    // segment (program 0x2060000, MPC 0x0, cal 0x2040000). Always
+                    // write it when the loaded image is a full 1 MB bin, so the
+                    // calibration on the car matches the file - and so an EWS
+                    // delete's calibration flags (0x48F2C/0x48F3E) actually land,
+                    // since they live here and the program write does not cover them.
                     bool hasCal = Global.openedFlash != null && Global.openedFlash.Length >= 0x5D000;
                     if (success && hasCal)
                     {
