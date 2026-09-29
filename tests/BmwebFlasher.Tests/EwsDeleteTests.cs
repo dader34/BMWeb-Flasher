@@ -250,6 +250,62 @@ namespace BmwebFlasher.Tests
         }
 
         [Fact]
+        public void AStockProgramWithAnAlreadyClearedTuneGetsTheProgramHalf()
+        {
+            // The usual state of a stock program paired with a tune taken
+            // from an EWS-deleted car.
+            byte[] img = BuildSyntheticStock();
+            img[0x48F2C] = 0x00;
+            img[0x48F3E] = 0x00;
+
+            Assert.True(EwsDelete.IsApplicable(img));
+            Assert.False(EwsDelete.IsAlreadyPatched(img));
+
+            byte[] patched = EwsDelete.Apply(img);
+            int changed = 0;
+            for (int i = 0; i < img.Length; i++)
+                if (img[i] != patched[i]) changed++;
+
+            Assert.Equal(2, changed);
+            Assert.Equal(0x00, patched[0xDB1C7]);
+            Assert.Equal(0x00, patched[0xDB1D3]);
+            Assert.True(EwsDelete.IsAlreadyPatched(patched));
+        }
+
+        [Fact]
+        public void ADeletedProgramWithAStockTuneGetsTheTuneHalf()
+        {
+            byte[] img = BuildSyntheticStock();
+            img[0xDB1C7] = 0x00;
+            img[0xDB1D3] = 0x00;
+
+            Assert.True(EwsDelete.IsApplicable(img));
+
+            byte[] patched = EwsDelete.Apply(img);
+            Assert.Equal(0x00, patched[0x48F2C]);
+            Assert.Equal(0x00, patched[0x48F3E]);
+            Assert.True(EwsDelete.IsAlreadyPatched(patched));
+        }
+
+        [Fact]
+        public void AHalfThatIsOnlyPartlyChangedIsRefused()
+        {
+            // One program byte deleted and the other stock is not a state
+            // the delete ever produces.
+            byte[] img = BuildSyntheticStock();
+            img[0xDB1C7] = 0x00;
+
+            Assert.False(EwsDelete.IsApplicable(img));
+            Assert.Throws<InvalidOperationException>(() => EwsDelete.Apply(img));
+
+            img = BuildSyntheticStock();
+            img[0x48F3E] = 0x00;
+
+            Assert.False(EwsDelete.IsApplicable(img));
+            Assert.Throws<InvalidOperationException>(() => EwsDelete.Apply(img));
+        }
+
+        [Fact]
         public void SyntheticWrongFlagValueIsRefused()
         {
             byte[] img = BuildSyntheticStock();

@@ -4,3 +4,6 @@ obj/
 
 # Release archives, rebuilt by build/release.sh
 /dist/
+
+# Local environment (BMWEB_ENV=development). See .env.example.
+.env

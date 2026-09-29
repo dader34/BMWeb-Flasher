@@ -38,6 +38,7 @@ namespace BmwebFlasher
         {
             InitializeComponent();
             Title = Global.Title;
+            RefreshCustomOptionsGate();
             ProgressDME.Foreground = ReadingBrush;
             ModuleSelect.SelectedIndex = 0; // fault-codes module, DME by default
             // The flashing module starts UNSELECTED: the user must choose DME or
@@ -440,6 +441,13 @@ namespace BmwebFlasher
             }
 
             _flashTcu = idx == 1;
+            // Custom Options belongs to the DME, so leave it on a module change.
+            // The identified state is cleared below, so the button's gate is too.
+            _dmeIdentified = false;
+            ForgetCarImmobilizer();
+            ForgetCarMapSwitch();
+            ShowCustomOptions(false);
+            RefreshCustomOptionsGate();
             DmePanel.IsVisible = !_flashTcu;
             TcuPanel.IsVisible = _flashTcu;
             // The SGBD picker is a DME control: the transmission's SGBD is
@@ -467,9 +475,35 @@ namespace BmwebFlasher
             SetStatus("Module: " + (_flashTcu ? "TCU (transmission)" : "DME (engine)"));
         }
 
+        /// <summary>
+        /// Shows that an identify is under way: it takes a few seconds (longer
+        /// when the cable has to be found first) and used to give no sign of
+        /// life. The button says so and cannot be pressed twice, the module
+        /// and port cannot be changed underneath it, and the progress bar
+        /// runs without a percentage, since identify has none to report.
+        /// </summary>
+        private void ShowIdentifying(bool identifying)
+        {
+            IdentifyDME.Content = identifying ? "Identifying..." : "Identify";
+            IdentifyDME.IsEnabled = !identifying && FlashModuleSelect.SelectedIndex >= 0;
+            FlashModuleSelect.IsEnabled = !identifying;
+            SetPort.IsEnabled = !identifying;
+            ProgressDME.IsIndeterminate = identifying;
+            if (!identifying)
+            {
+                ProgressDME.Value = 0;
+                // Identify reports its own result; if it had nothing to say,
+                // do not leave the line claiming it is still going.
+                if (statusTextBlock.Text != null && statusTextBlock.Text.StartsWith("Identifying the"))
+                    statusTextBlock.Text = null;
+            }
+        }
+
         private async void IdentifyDME_Click(object sender, RoutedEventArgs e)
         {
             UpdateProgressBar(0);
+            ShowIdentifying(true);
+            SetStatus(_flashTcu ? "Identifying the TCU..." : "Identifying the DME...");
             // The original ran IdentDME() synchronously on the UI thread, which
             // froze the window for the duration of the read. It is off-thread
             // now -- but a discarded Task.Run swallows every exception, which
@@ -485,8 +519,17 @@ namespace BmwebFlasher
             }
             catch (Exception ex)
             {
+                // Before the message, so the window is not left looking busy
+                // behind it.
+                ShowIdentifying(false);
                 SetStatus("Identify failed: " + ex.Message);
                 await MessageAsync(Describe(ex), "Identify");
+            }
+            finally
+            {
+                // Posted, so it runs after the updates identify itself queued
+                // and the bar is reset last.
+                Dispatcher.UIThread.Post(() => ShowIdentifying(false));
             }
         }
 
@@ -2434,6 +2477,9 @@ namespace BmwebFlasher
 
             statusTextBlock.Text = null;
             LoadFile2.IsEnabled = FullBin_CheckBox.IsChecked == true;
+            // The files were cleared above; a loaded .0PA / .0DA goes with them.
+            ClearExchangeFile(clearFiles: false);
+            RefreshFullBinVisibility();
 
             // Toggling Full Binary clears the loaded files above, so the gate
             // has to be re-evaluated against the new state.
@@ -2480,6 +2526,9 @@ namespace BmwebFlasher
             if (FullBin_CheckBox.IsChecked != true)
                 return "EWS delete patches the program area, so it needs Full Binary mode.";
 
+            if (ProgramHasNoTune)
+                return "EWS delete also edits the tune, and a .0PA has no tune in it. Load its .0DA as well.";
+
             if (Global.openedFlash == null)
                 return "Load the full binary first, so its program version can be checked.";
 
@@ -2501,8 +2550,9 @@ namespace BmwebFlasher
 
             if (!EwsDelete.IsApplicable(Global.openedFlash))
             {
-                return "The loaded program is the right version but does not carry the expected " +
-                       "instructions at the patch sites, so it may already be modified.";
+                return "The loaded program is the right version, but its immobilizer bytes hold " +
+                       "values that are neither stock nor deleted, so it may be modified in some " +
+                       "other way.";
             }
 
             return null;
@@ -2514,16 +2564,29 @@ namespace BmwebFlasher
         /// </summary>
         private void RefreshEwsDeleteGate()
         {
-            bool allowed = EwsDeleteBlockedReason() == null;
+            string blocked = EwsDeleteBlockedReason();
+            bool allowed = blocked == null;
             EwsDelete_CheckBox.IsEnabled = allowed;
             if (!allowed)
                 EwsDelete_CheckBox.IsChecked = false;
+
+            // The checkbox lives on the Custom Options view, so say there why
+            // it is unavailable, and on the main view whether it is ticked.
+            EwsDeleteReason_Box.Text = blocked ?? string.Empty;
+            RefreshCustomOptionsSummary();
+            // Every load and every clear comes through here, so this is
+            // where the names under the load buttons are kept in step.
+            RefreshLoadedNames();
+            RefreshCustomOptionsGate();
         }
 
         private async void EwsDelete_CheckBox_Changed(object sender, RoutedEventArgs e)
         {
             if (EwsDelete_CheckBox.IsChecked != true)
+            {
+                RefreshCustomOptionsSummary();
                 return;
+            }
 
             // Re-check at the moment of ticking: the loaded file or the
             // identified DME may have changed since the box was enabled.
@@ -2544,9 +2607,11 @@ namespace BmwebFlasher
                     "EWS Delete"))
             {
                 EwsDelete_CheckBox.IsChecked = false;
+                RefreshCustomOptionsSummary();
                 return;
             }
 
+            RefreshCustomOptionsSummary();
             SetStatus("EWS delete will be applied to the program before flashing.");
         }
 
@@ -2740,6 +2805,14 @@ namespace BmwebFlasher
 
                 Global.diagProtocol = GetResult_String("DIAG_PROT_IST", ediabas.ResultSets);
 
+                // Read here, so a mismatch can be raised when a file is
+                // loaded rather than part-way through a flash.
+                ReadCarImmobilizer(ediabas);
+                ReadCarMapSwitch(ediabas);
+                string immobilizer = CarImmobilizerSummary() + CarMapSwitchSummary();
+                bool immobilizerRead = _carProgramEwsDeleted != null || _carTuneEwsDeleted != null ||
+                                       _carMapSwitch != null;
+
                 Dispatcher.UIThread.Post(() =>
                 {
                     DMEType_Box.Text = DMEType;
@@ -2762,7 +2835,12 @@ namespace BmwebFlasher
 
                     // Identifying a different DME can invalidate an already
                     // ticked EWS box, so re-evaluate on every identify.
+                    _dmeIdentified = true;
                     RefreshEwsDeleteGate();
+                    // Not after a flash, where the status line is holding
+                    // the result of the flash.
+                    if (immobilizerRead && preflightPort)
+                        SetStatus(immobilizer);
                 });
             }
         }
@@ -2773,7 +2851,11 @@ namespace BmwebFlasher
         {
             // Every exit path below can change whether the EWS patch applies,
             // so the gate is refreshed once here rather than at each return.
-            try { await LoadFile_1_Core(); }
+            try
+            {
+                await LoadFile_1_Core();
+                await GateLoadedFilesAsync();
+            }
             finally { RefreshEwsDeleteGate(); }
         }
 
@@ -2781,9 +2863,9 @@ namespace BmwebFlasher
         {
             var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
             {
-                Title = "Load File",
+                Title = FullBin_CheckBox.IsChecked == true ? "Load External" : "Load File",
                 AllowMultiple = false,
-                FileTypeFilter = BinaryFilters()
+                FileTypeFilter = LoadFilters(FullBin_CheckBox.IsChecked == true)
             });
 
             var file = files?.FirstOrDefault();
@@ -2796,7 +2878,16 @@ namespace BmwebFlasher
                 return;
             }
 
+            // BMW's own .0PA / .0DA are decoded and stand in for the load
+            // buttons; see MainWindow.ExchangeFile.cs.
+            if (Ms45ExchangeFile.IsProgramFile(path) || Ms45ExchangeFile.IsDataFile(path))
+            {
+                await LoadExchangeFile(path);
+                return;
+            }
+
             Global.openedFlash = File.ReadAllBytes(path);
+            _loadedFlashName = Path.GetFileName(path);
 
             if (FullBin_CheckBox.IsChecked == false)
             {
@@ -2805,7 +2896,7 @@ namespace BmwebFlasher
                     if (!VerifyParameterMatch(Global.openedFlash, Global.SW_Ref))
                     {
                         if (!await ConfirmAsync(
-                                "Loaded tune does not match DME's program.\n\nDo you wish to flash anyway?",
+                                TuneMismatchPrompt(),
                                 "Warning"))
                         {
                             Global.openedFlash = null;
@@ -2839,7 +2930,7 @@ namespace BmwebFlasher
                 if (!VerifyProgramMatch(Global.openedFlash, Global.HW_Ref))
                 {
                     if (!await ConfirmAsync(
-                            "Loaded program does not match DME hardware.\n\nDo you wish to flash anyway?",
+                            ProgramMismatchPrompt(),
                             "Warning"))
                     {
                         Global.openedFlash = null;
@@ -2855,7 +2946,7 @@ namespace BmwebFlasher
                     if (!VerifyFlashMPCMatch(Global.openedFlash, Global.openedMPC))
                     {
                         if (!await ConfirmAsync(
-                                "External flash and MPC flash do not match. Flashing anyway may permanently brick your DME.\n\nDo you wish to continue?",
+                                "External flash and MPC flash do not match. Flashing them may permanently brick your DME.\n\nDo you wish to load them anyway?",
                                 "Warning"))
                         {
                             Global.openedFlash = null;
@@ -2877,15 +2968,27 @@ namespace BmwebFlasher
 
         private async Task LoadFile_2()
         {
-            try { await LoadFile_2_Core(); }
+            try
+            {
+                await LoadFile_2_Core();
+                await GateLoadedFilesAsync();
+            }
             finally { RefreshEwsDeleteGate(); }
         }
 
         private async Task LoadFile_2_Core()
         {
+            // With a .0PA loaded the MPC is already there, and this button
+            // loads the program's tune instead.
+            if (ProgramFromExchangeFile)
+            {
+                await LoadPairedDataFileAsync();
+                return;
+            }
+
             var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
             {
-                Title = "Load File 2 (MPC Flash)",
+                Title = "Load MPC",
                 AllowMultiple = false,
                 FileTypeFilter = BinaryFilters()
             });
@@ -2895,6 +2998,7 @@ namespace BmwebFlasher
             if (string.IsNullOrEmpty(path)) return;
 
             Global.openedMPC = File.ReadAllBytes(path);
+            _loadedMpcName = Path.GetFileName(path);
 
             // The original dereferenced openedMPC here without a null check, so
             // cancelling the dialog threw a NullReferenceException.
@@ -2911,7 +3015,7 @@ namespace BmwebFlasher
                 if (!VerifyFlashMPCMatch(Global.openedFlash, Global.openedMPC))
                 {
                     if (!await ConfirmAsync(
-                            "External flash and MPC flash do not match. Flashing anyway may permanently brick your DME.\n\nDo you wish to continue?",
+                            "External flash and MPC flash do not match. Flashing them may permanently brick your DME.\n\nDo you wish to load them anyway?",
                             "Warning"))
                     {
                         Global.openedFlash = null;
@@ -3296,6 +3400,31 @@ namespace BmwebFlasher
             Checksums_Signatures ChecksumsSignatures = new Checksums_Signatures();
             bool success = true;
 
+            // Immobilizer match, asked before the diagnostic session opens so
+            // a prompt left waiting cannot time the session out. The program
+            // will be EWS-deleted if the file already is or the box is ticked.
+            // A ticked box clears map 1's flags itself, and a .0PA has no
+            // tune, so map 1 is only asked about otherwise.
+            bool clearMap1Immobilizer = false, clearMap2Immobilizer = false;
+            if (Global.openedFlash != null && Global.openedFlash.Length == MapSwitch.FullFlashLength)
+            {
+                bool ticked = EwsDelete_CheckBox.IsChecked == true;
+                bool programDeleted = ticked || EwsDelete.ProgramBytesAreDeleted(
+                    Global.openedFlash[EwsDelete.ProgramStateOffset],
+                    Global.openedFlash[EwsDelete.ProgramMaskOffset]);
+
+                byte[] matched = await MatchImmobilizerAsync(
+                    Global.openedFlash, Global.openedMPC, programDeleted,
+                    checkMap1: !ticked && !ProgramHasNoTune, "Flash Program");
+
+                clearMap1Immobilizer =
+                    EwsDelete.CalibrationHasStockImmobilizer(Global.openedFlash, MapSwitch.CalibrationStart) &&
+                    !EwsDelete.CalibrationHasStockImmobilizer(matched, MapSwitch.CalibrationStart);
+                clearMap2Immobilizer =
+                    EwsDelete.CalibrationHasStockImmobilizer(Global.openedFlash, MapSwitch.Map2Start) &&
+                    !EwsDelete.CalibrationHasStockImmobilizer(matched, MapSwitch.Map2Start);
+            }
+
             ShowProgressAsFlashing(true);
             try
             {
@@ -3358,6 +3487,20 @@ namespace BmwebFlasher
                     }
                 }
 
+                // Whatever the program ends up as, the tunes that go with it
+                // must agree about the immobilizer. The answers were taken
+                // before the session opened; see the top of this method.
+                if (clearMap1Immobilizer)
+                {
+                    source = EwsDelete.ApplyCalibrationDelete(source, MapSwitch.CalibrationStart);
+                    FlashLog.Note("Immobilizer flags cleared in the tune (map 1) to match the program");
+                }
+                if (clearMap2Immobilizer)
+                {
+                    source = EwsDelete.ApplyCalibrationDelete(source, MapSwitch.Map2Start);
+                    FlashLog.Note("Immobilizer flags cleared in map 2 to match the program");
+                }
+
                 byte[] toFlash = ChecksumsSignatures.CorrectProgramChecksums(source, Global.openedMPC);
                 toFlash = ChecksumsSignatures.SignMS45Program(toFlash, Global.openedMPC).Skip(0x60000).Take(0x9FF40).ToArray();
 
@@ -3406,7 +3549,10 @@ namespace BmwebFlasher
                     // calibration on the car matches the file - and so an EWS
                     // delete's calibration flags (0x48F2C/0x48F3E) actually land,
                     // since they live here and the program write does not cover them.
-                    bool hasCal = Global.openedFlash != null && Global.openedFlash.Length >= 0x5D000;
+                    // A program loaded from a .0PA has a blank tune area, so
+                    // the calibration on the car is left as it is.
+                    bool hasCal = Global.openedFlash != null && Global.openedFlash.Length >= 0x5D000 &&
+                                  !ProgramHasNoTune;
                     if (success && hasCal)
                     {
                         uint calEraseStart = 0x2040000;

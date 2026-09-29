@@ -7,7 +7,7 @@
         Title="BMWeb Flasher">
   <!-- The WPF original positioned every control with absolute Margins inside a
        Grid. That does not survive a different text renderer, so the port uses
-       real layout containers instead. The two tabs share the status bar and
+       real layout containers instead. The tabs share the status bar and
        progress bar at the bottom. -->
   <Grid Margin="0" RowDefinitions="*,Auto,Auto">
 
@@ -15,7 +15,11 @@
 
       <!-- ============ Flashing ============ -->
       <TabItem Header="Flashing">
-        <Grid Margin="8" RowDefinitions="Auto,*" ColumnDefinitions="*,Auto">
+        <!-- Two views share this tab. Custom Options replaces the flashing
+             controls rather than getting a tab header of its own, so Flashing
+             stays the selected tab while it is open. -->
+        <Panel>
+        <Grid x:Name="FlashingMainView" Margin="8" RowDefinitions="Auto,*" ColumnDefinitions="*,Auto">
           <TextBlock x:Name="ModuleInfoHeader" Grid.Row="0" Grid.Column="0" Text="Select a control unit above." Margin="0,0,0,8"/>
 
           <Grid Grid.Row="1" Grid.Column="0"
@@ -39,7 +43,7 @@
           </Grid>
 
           <!-- Scrolls if the window is ever shorter than the button stack, so
-               the last controls (Full Binary / EWS Delete) can't be clipped. -->
+               the last controls (Full Binary / Custom Options) can't be clipped. -->
           <ScrollViewer Grid.Row="0" Grid.RowSpan="2" Grid.Column="1"
                         VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
             <StackPanel Width="210" Spacing="4" HorizontalAlignment="Right">
@@ -58,16 +62,49 @@
               <!-- DME controls -->
               <StackPanel x:Name="DmePanel" Spacing="4">
                 <Button x:Name="ReadTune"     Content="Read DME"               HorizontalAlignment="Stretch" Click="ReadTune_Click"     IsEnabled="False"/>
-                <Button x:Name="LoadFile"     Content="Load File"              HorizontalAlignment="Stretch" Click="LoadFile_Click"     IsEnabled="False"/>
-                <Button x:Name="LoadFile2"    Content="Load File 2 (MPC Flash)" HorizontalAlignment="Stretch" Click="LoadFile2_Click"    IsEnabled="False"/>
-                <Button x:Name="FlashProgram" Content="Flash Program"          HorizontalAlignment="Stretch" Click="FlashProgram_Click" IsEnabled="False"/>
+                <!-- Only for a car that identified as carrying the map switch. -->
+                <Button x:Name="ReadInstalledMaps" Content="Read Installed Maps" HorizontalAlignment="Stretch" Click="ReadInstalledMaps_Click" IsVisible="False"
+                        ToolTip.Tip="Reads map 1 and map 2 from the car and saves each as a tune file."/>
+                <Button x:Name="LoadFile"     Content="Load File / .0da"              HorizontalAlignment="Stretch" Click="LoadFile_Click"     IsEnabled="False"/>
+                <TextBlock x:Name="LoadFileName_Box" IsVisible="False" FontSize="11" Opacity="0.7"
+                           TextTrimming="CharacterEllipsis" Margin="2,-2,0,2"/>
+                <!-- Shown when a BMW .0PA / .0DA was loaded in place of a raw
+                     binary. It sits under the button it was loaded with,
+                     which is greyed out until it is removed. -->
+                <Border x:Name="ExchangeFileRow" IsVisible="False"
+                        BorderThickness="1" BorderBrush="Gray" CornerRadius="4" Padding="6,2">
+                  <Grid ColumnDefinitions="*,Auto">
+                    <TextBlock x:Name="ExchangeFile_Box" Grid.Column="0" FontSize="12"
+                               VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                    <Button x:Name="ExchangeFileRemove" Grid.Column="1" Content="&#x2715;"
+                            Padding="6,0" Margin="4,0,0,0" Click="ExchangeFileRemove_Click"
+                            ToolTip.Tip="Remove the loaded file."/>
+                  </Grid>
+                </Border>
+                <!-- File 2 and Flash Program only mean something for a full
+                     binary, so they stay hidden until Full Binary is ticked. -->
+                <Button x:Name="LoadFile2"    Content="Load File 2 (MPC Flash)" HorizontalAlignment="Stretch" Click="LoadFile2_Click"    IsEnabled="False" IsVisible="False"/>
+                <TextBlock x:Name="LoadFile2Name_Box" IsVisible="False" FontSize="11" Opacity="0.7"
+                           TextTrimming="CharacterEllipsis" Margin="2,-2,0,2"/>
+                <!-- The .0DA paired with a loaded .0PA, which has no tune of
+                     its own. Optional: without it the tune on the car stays. -->
+                <Border x:Name="ExchangeTuneRow" IsVisible="False"
+                        BorderThickness="1" BorderBrush="Gray" CornerRadius="4" Padding="6,2">
+                  <Grid ColumnDefinitions="*,Auto">
+                    <TextBlock x:Name="ExchangeTune_Box" Grid.Column="0" FontSize="12"
+                               VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                    <Button x:Name="ExchangeTuneRemove" Grid.Column="1" Content="&#x2715;"
+                            Padding="6,0" Margin="4,0,0,0" Click="ExchangeTuneRemove_Click"
+                            ToolTip.Tip="Remove the tune. The tune on the car is then left as it is."/>
+                  </Grid>
+                </Border>
+                <Button x:Name="FlashProgram" Content="Flash Program"          HorizontalAlignment="Stretch" Click="FlashProgram_Click" IsEnabled="False" IsVisible="False"/>
                 <Button x:Name="FlashDME"     Content="Flash Tune"             HorizontalAlignment="Stretch" Click="FlashData_Click"    IsEnabled="False"/>
                 <CheckBox x:Name="FullBin_CheckBox" Content="Full Binary" IsEnabled="False" Click="FullBin_CheckBox_Changed"/>
-                <!-- Only meaningful for a full-binary program flash: the patch sites live
-                     in the program area, not the tune/parameter area. -->
-                <CheckBox x:Name="EwsDelete_CheckBox" Content="EWS Delete" IsEnabled="False"
-                          Click="EwsDelete_CheckBox_Changed"
-                          ToolTip.Tip="Patch the immobilizer check out of the program before flashing. MS45.1 only."/>
+                <Button x:Name="CustomOptions" Content="&#x2699; Custom Options" HorizontalAlignment="Stretch"
+                        Click="CustomOptions_Click"
+                        ToolTip.Tip="EWS delete and map switch."/>
+                <TextBlock x:Name="CustomOptionsSummary_Box" TextWrapping="Wrap" Opacity="0.6" FontSize="11"/>
               </StackPanel>
 
               <!-- TCU controls. The GS20 SGBD has no flash jobs, so this is
@@ -123,6 +160,85 @@
             </StackPanel>
           </ScrollViewer>
         </Grid>
+
+        <!-- ============ Custom Options ============ -->
+        <!-- File preparation and program patches. Nothing here talks to the
+             car; the Flashing view stays the one place that writes to the DME. -->
+        <ScrollViewer x:Name="CustomOptionsView" IsVisible="False"
+                      VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+          <StackPanel Margin="8" Spacing="10">
+            <Grid ColumnDefinitions="Auto,*">
+              <Button x:Name="CustomOptionsBack" Grid.Column="0" Content="&#x2190; Back"
+                      Click="CustomOptionsBack_Click"/>
+              <TextBlock Grid.Column="1" Text="Custom Options" FontWeight="SemiBold" FontSize="15"
+                         VerticalAlignment="Center" Margin="12,0,0,0"/>
+            </Grid>
+
+            <!-- EWS delete. Only meaningful for a full-binary program flash: the
+                 patch sites live in the program area, not the tune/parameter area. -->
+            <TextBlock Text="EWS Delete" FontWeight="SemiBold"/>
+            <CheckBox x:Name="EwsDelete_CheckBox" Content="EWS Delete" IsEnabled="False"
+                      Click="EwsDelete_CheckBox_Changed"
+                      ToolTip.Tip="Patch the immobilizer check out of the program before flashing. MS45.1 only."/>
+            <TextBlock x:Name="EwsDeleteReason_Box" TextWrapping="Wrap" Opacity="0.6" FontSize="11"/>
+
+            <Separator/>
+
+            <TextBlock Text="Map Switch" FontWeight="SemiBold"/>
+              <TextBlock TextWrapping="Wrap" Opacity="0.8"
+                         Text="Experimental. Builds an MS45.1 program (0044570LO02S) that holds two tunes. With the engine stopped, hold the brake and full throttle for 5 seconds to switch; the tach then shows 1000 rpm for map 1 or 2000 rpm for map 2. It also shows the active map once, about 6 seconds after ignition-on."/>
+
+              <Grid ColumnDefinitions="200,*" RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="6" ColumnSpacing="8">
+                <Button x:Name="MapSwitchLoadFlash" Grid.Row="0" Grid.Column="0" Content="External Flash / .0pa..."
+                        HorizontalAlignment="Stretch" Click="MapSwitchLoadFlash_Click"
+                        ToolTip.Tip="The 1 MB external flash image to build from, or a BMW .0PA program file, which fills in the MPC as well."/>
+                <TextBlock x:Name="MapSwitchFlash_Box" Grid.Row="0" Grid.Column="1"
+                           VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Text="(none)"/>
+
+                <Button x:Name="MapSwitchLoadMpc" Grid.Row="1" Grid.Column="0" Content="MPC Flash / .0pa..."
+                        HorizontalAlignment="Stretch" Click="MapSwitchLoadMpc_Click"
+                        ToolTip.Tip="The 448 KB internal flash image that belongs to the external flash, or a BMW .0PA program file to take it from."/>
+                <TextBlock x:Name="MapSwitchMpc_Box" Grid.Row="1" Grid.Column="1"
+                           VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Text="(none)"/>
+
+                <Button x:Name="MapSwitchLoadMap1" Grid.Row="2" Grid.Column="0" Content="Map 1 Tune / .0da..."
+                        HorizontalAlignment="Stretch" Click="MapSwitchLoadMap1_Click"
+                        ToolTip.Tip="Optional. A tune partial, a full image, or a BMW .0DA data file. Left empty, the tune inside the external flash is kept."/>
+                <TextBlock x:Name="MapSwitchMap1_Box" Grid.Row="2" Grid.Column="1"
+                           VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Text="(none)"/>
+
+                <Button x:Name="MapSwitchLoadMap2" Grid.Row="3" Grid.Column="0" Content="Map 2 Tune / .0da..."
+                        HorizontalAlignment="Stretch" Click="MapSwitchLoadMap2_Click"
+                        ToolTip.Tip="Optional. A tune partial, a full image, or a BMW .0DA data file. Left empty, map 2 is a copy of map 1."/>
+                <TextBlock x:Name="MapSwitchMap2_Box" Grid.Row="3" Grid.Column="1"
+                           VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Text="(none)"/>
+              </Grid>
+
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button x:Name="MapSwitchUseLoaded" Content="Use Loaded Files" Click="MapSwitchUseLoaded_Click"
+                        ToolTip.Tip="Take the external flash and MPC flash already loaded for flashing."/>
+                <Button x:Name="MapSwitchClearMaps" Content="Reset Maps" Click="MapSwitchClearMaps_Click"
+                        ToolTip.Tip="Forget the chosen map 1 and map 2 tunes."/>
+              </StackPanel>
+
+              <Separator/>
+
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button x:Name="MapSwitchBuild" Content="Build" Click="MapSwitchBuild_Click" IsEnabled="False"/>
+                <Button x:Name="MapSwitchSave" Content="Save Files..." Click="MapSwitchSave_Click" IsEnabled="False"
+                        ToolTip.Tip="Save the built external flash and MPC flash, checksummed and signed."/>
+                <Button x:Name="MapSwitchSend" Content="Load for Flashing" Click="MapSwitchSend_Click" IsEnabled="False"
+                        ToolTip.Tip="Load the built pair as the full binary to flash, ready for Flash Program."/>
+              </StackPanel>
+
+              <TextBlock x:Name="MapSwitchReport_Box" TextWrapping="Wrap" FontSize="12"
+                         Text="Choose an external flash and its MPC flash."/>
+
+              <TextBlock TextWrapping="Wrap" Opacity="0.6" FontSize="11"
+                         Text="Only maps and curves switch. Single values (limits, thresholds, switches) always come from map 1. Map 2 is stored inside the program area, so changing it needs a full program flash; map 1 can still be written with Flash Tune."/>
+          </StackPanel>
+        </ScrollViewer>
+        </Panel>
       </TabItem>
 
       <!-- ============ Fault Codes ============ -->
