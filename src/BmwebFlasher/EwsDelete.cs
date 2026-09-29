@@ -91,9 +91,34 @@ namespace BmwebFlasher
         }
 
         /// <summary>
-        /// True when this looks like an unpatched MS45.1 image the delete can be
-        /// applied to: right size, right program version, and every edit byte still
-        /// at its stock value.
+        /// The state of one half of the delete. The program half is the two
+        /// engine-enable bytes, the calibration half the two error-class
+        /// flags; within a half the two bytes always change together.
+        /// </summary>
+        private enum Half { Stock, Deleted, Unknown }
+
+        private static Half StateOf(byte[] flash, bool program)
+        {
+            bool stock = true, deleted = true;
+            foreach (var (offset, stockBytes, deletedBytes) in Edits)
+            {
+                if ((offset >= ProgramStart) != program) continue;
+                stock &= MatchesAt(flash, offset, stockBytes);
+                deleted &= MatchesAt(flash, offset, deletedBytes);
+            }
+            return stock ? Half.Stock : deleted ? Half.Deleted : Half.Unknown;
+        }
+
+        /// <summary>
+        /// True when this is an MS45.1 image the delete can be applied to: right
+        /// size, right program version, each half either stock or already
+        /// deleted, and at least one half still stock.
+        ///
+        /// The halves are judged separately because they are flashed and tuned
+        /// separately: a stock program is often paired with a tune whose flags
+        /// were cleared earlier, and the delete then has only the program left
+        /// to do. A half holding anything else is refused, since the image is
+        /// then not what these offsets were derived from.
         /// </summary>
         public static bool IsApplicable(byte[] flash)
         {
@@ -103,11 +128,12 @@ namespace BmwebFlasher
             if (ReadProgramVersion(flash) != SupportedProgramVersion)
                 return false;
 
-            foreach (var (offset, stock, _) in Edits)
-                if (!MatchesAt(flash, offset, stock))
-                    return false;
+            Half program = StateOf(flash, program: true);
+            Half calibration = StateOf(flash, program: false);
+            if (program == Half.Unknown || calibration == Half.Unknown)
+                return false;
 
-            return true;
+            return program == Half.Stock || calibration == Half.Stock;
         }
 
         /// <summary>True when every edit already holds its deleted value.</summary>
@@ -135,8 +161,9 @@ namespace BmwebFlasher
         }
 
         /// <summary>
-        /// Returns a copy with the EWS delete applied across both partitions. The
-        /// caller's array is left alone. Checksums and RSA signatures for both the
+        /// Returns a copy with the EWS delete applied across both partitions; a
+        /// half that is already deleted is left as it is. The caller's array is
+        /// left alone. Checksums and RSA signatures for both the
         /// program and the calibration are recomputed by the writer, not here - the
         /// caller must sign/checksum both partitions after this.
         /// </summary>
