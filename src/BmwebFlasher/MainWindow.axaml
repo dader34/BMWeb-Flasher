@@ -185,7 +185,7 @@
 
             <TextBlock Text="Map Switch" FontWeight="SemiBold"/>
               <TextBlock TextWrapping="Wrap" Opacity="0.8"
-                         Text="Experimental. Builds an MS45.1 program (0044570LO02S) that holds two tunes. With the ignition on and the engine stopped, the trigger below switches maps; the tach then shows 1000 rpm for map 1 or 2000 rpm for map 2. It also shows the active map for 3 seconds at ignition-on."/>
+                         Text="Experimental. Builds an MS45.1 program (0044570LO02S) that holds two complete tunes: maps, curves and single values all switch. With the ignition on and the engine stopped, the trigger below switches tunes; the tach then shows 1000 rpm for map 1 or 2000 rpm for map 2. It also shows the active map for 3 seconds at ignition-on."/>
 
               <StackPanel Orientation="Horizontal" Spacing="12">
                 <TextBlock Text="Trigger:" VerticalAlignment="Center"/>
@@ -197,15 +197,6 @@
                              ToolTip.Tip="Hold the brake and floor the throttle for 5 seconds."/>
               </StackPanel>
 
-              <StackPanel Orientation="Horizontal" Spacing="12">
-                <TextBlock Text="Switches:" VerticalAlignment="Center"/>
-                <RadioButton x:Name="MapSwitchScopeMaps" GroupName="MapSwitchScope" IsChecked="True"
-                             Content="Maps only" Click="MapSwitchTrigger_Click"
-                             ToolTip.Tip="Tables and curves switch. Single values (limits, thresholds, switches) always come from map 1. Proven on a car."/>
-                <RadioButton x:Name="MapSwitchScopeFull" GroupName="MapSwitchScope"
-                             Content="Full tune" Click="MapSwitchTrigger_Click"
-                             ToolTip.Tip="Single values switch too, so map 2 is the whole tune: rev limiter, speed limiter, thresholds. Done by moving the DME's calibration base register. Not yet proven on a car."/>
-              </StackPanel>
 
               <Grid ColumnDefinitions="200,*" RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="6" ColumnSpacing="8">
                 <Button x:Name="MapSwitchLoadFlash" Grid.Row="0" Grid.Column="0" Content="External Flash / .0pa..."

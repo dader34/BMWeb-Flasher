@@ -348,7 +348,7 @@ namespace BmwebFlasher
             MapSwitchReport_Box.Text = blocked ?? DescribeMapSwitchInputs();
         }
 
-        /// <summary>What Build will do to the pair, given the chosen trigger and scope.</summary>
+        /// <summary>What Build will do to the pair, given the chosen trigger.</summary>
         private string DescribeMapSwitchInputs()
         {
             MapSwitch.Trigger? trigger = MapSwitch.InstalledTrigger(_mapSwitchMpc);
@@ -358,16 +358,13 @@ namespace BmwebFlasher
             string installed = MapSwitch.Describe(trigger.Value) + ", " + MapSwitch.Describe(scope.Value);
             if (!MapSwitch.IsCurrentVersion(_mapSwitchMpc))
                 return "This pair carries an earlier version of the map switch (" + installed + "). Build updates it.";
-            if (trigger == SelectedTrigger && scope == SelectedScope)
-                return "This pair already carries the map switch with these choices. Build replaces its maps.";
-            return "This pair carries the map switch with other choices (" + installed + "). Build changes it.";
+            if (trigger == SelectedTrigger)
+                return "This pair already carries the map switch with this trigger. Build replaces its maps.";
+            return "This pair carries the map switch with the other trigger (" + installed + "). Build changes it.";
         }
 
         private MapSwitch.Trigger SelectedTrigger =>
             MapSwitchTriggerPedals?.IsChecked == true ? MapSwitch.Trigger.Pedals : MapSwitch.Trigger.DscButton;
-
-        private MapSwitch.Scope SelectedScope =>
-            MapSwitchScopeFull?.IsChecked == true ? MapSwitch.Scope.FullTune : MapSwitch.Scope.MapsOnly;
 
         private void MapSwitchTrigger_Click(object sender, RoutedEventArgs e)
             => MapSwitchInputsChanged();
@@ -572,7 +569,7 @@ namespace BmwebFlasher
             try
             {
                 MapSwitch.Result built = MapSwitch.Build(
-                    _mapSwitchFlash, _mapSwitchMpc, _mapSwitchMap1, _mapSwitchMap2, SelectedTrigger, SelectedScope);
+                    _mapSwitchFlash, _mapSwitchMpc, _mapSwitchMap1, _mapSwitchMap2, SelectedTrigger);
 
                 // An EWS-deleted program needs the immobilizer off in the
                 // tunes too; see MatchImmobilizerAsync.

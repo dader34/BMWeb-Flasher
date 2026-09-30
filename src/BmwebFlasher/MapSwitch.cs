@@ -27,8 +27,8 @@ namespace BmwebFlasher
     ///     0xA0000 while map 2 is selected: at stored-data restore, and at the
     ///     gesture. Pointers derived from a moved r2 point into map 2 already
     ///     and fall outside the range the lookup hooks redirect, so nothing is
-    ///     redirected twice. <see cref="Scope.MapsOnly"/> leaves r2 alone and
-    ///     single values always come from map 1.
+    ///     redirected twice. The earlier <see cref="Scope.MapsOnly"/> builds
+    ///     left r2 alone, so their single values always came from map 1.
     ///
     ///   - The routine that builds CAN frame 0x316 (engine speed for the cluster)
     ///     is hooked where it stores the rpm. With the engine stopped and the car
@@ -247,12 +247,12 @@ namespace BmwebFlasher
         /// <summary>
         /// How much of the tune switches.
         ///
-        ///   MapsOnly   tables and curves; single values stay map 1's.
         ///   FullTune   single values too, by moving r2, see the class summary.
+        ///              The only scope built today.
+        ///   MapsOnly   tables and curves; single values stay map 1's. The
+        ///              scope of the earlier builds, kept so they are recognised.
         /// </summary>
         public enum Scope { MapsOnly, FullTune }
-
-        public const Scope DefaultScope = Scope.MapsOnly;
 
         public static string Describe(Scope scope)
             => scope == Scope.FullTune ? "full tune" : "maps only";
@@ -286,18 +286,18 @@ namespace BmwebFlasher
             public override int GetHashCode() => (((int)Trigger * 16 + (int)Startup) * 4 + (int)Watch) * 2 + (int)Scope;
         }
 
-        /// <summary>The version built today for a trigger and scope.</summary>
-        private static Version CurrentVersion(Trigger trigger, Scope scope)
-            => new Version(trigger, StartupIndication.ImmediateLong, DscWatch.Car, scope);
+        /// <summary>The version built today for a trigger: full tune, 3 s indication at ignition-on.</summary>
+        private static Version CurrentVersion(Trigger trigger)
+            => new Version(trigger, StartupIndication.ImmediateLong, DscWatch.Car, Scope.FullTune);
 
-        private static bool IsCurrent(Version version) => version == CurrentVersion(version.Trigger, version.Scope);
+        private static bool IsCurrent(Version version) => version == CurrentVersion(version.Trigger);
 
         private static readonly Version[] KnownVersions =
         {
-            CurrentVersion(Trigger.DscButton, Scope.MapsOnly),
-            CurrentVersion(Trigger.DscButton, Scope.FullTune),
-            CurrentVersion(Trigger.Pedals, Scope.MapsOnly),
-            CurrentVersion(Trigger.Pedals, Scope.FullTune),
+            CurrentVersion(Trigger.DscButton),
+            CurrentVersion(Trigger.Pedals),
+            new Version(Trigger.DscButton, StartupIndication.ImmediateLong, DscWatch.Car, Scope.MapsOnly),
+            new Version(Trigger.Pedals, StartupIndication.ImmediateLong, DscWatch.Car, Scope.MapsOnly),
             new Version(Trigger.DscButton, StartupIndication.ImmediateLong, DscWatch.First),
             new Version(Trigger.Pedals, StartupIndication.Immediate),
             new Version(Trigger.Pedals, StartupIndication.None),
@@ -624,16 +624,15 @@ namespace BmwebFlasher
         /// stores a copy of map 1. The caller's arrays are left alone.
         /// </summary>
         public static Result Build(byte[] flash, byte[] mpc, byte[] map1, byte[] map2)
-            => Build(flash, mpc, map1, map2, DefaultTrigger, DefaultScope);
+            => Build(flash, mpc, map1, map2, DefaultTrigger);
 
         /// <summary>
         /// As <see cref="Build(byte[], byte[], byte[], byte[])"/>, choosing the
-        /// trigger and the scope. A pair that carries another choice has its
-        /// code replaced.
+        /// trigger. A pair that carries the other trigger, or an earlier
+        /// version, has its code replaced.
         /// </summary>
-        public static Result Build(byte[] flash, byte[] mpc, byte[] map1, byte[] map2, Trigger trigger,
-            Scope scope = Scope.MapsOnly)
-            => Build(flash, mpc, map1, map2, CurrentVersion(trigger, scope));
+        public static Result Build(byte[] flash, byte[] mpc, byte[] map1, byte[] map2, Trigger trigger)
+            => Build(flash, mpc, map1, map2, CurrentVersion(trigger));
 
         /// <summary>
         /// As <see cref="Build(byte[], byte[], byte[], byte[])"/>, choosing one
