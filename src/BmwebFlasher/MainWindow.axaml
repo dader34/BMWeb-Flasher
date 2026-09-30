@@ -197,6 +197,16 @@
                              ToolTip.Tip="Hold the brake and floor the throttle for 5 seconds."/>
               </StackPanel>
 
+              <StackPanel Orientation="Horizontal" Spacing="12">
+                <TextBlock Text="Switches:" VerticalAlignment="Center"/>
+                <RadioButton x:Name="MapSwitchScopeMaps" GroupName="MapSwitchScope" IsChecked="True"
+                             Content="Maps only" Click="MapSwitchTrigger_Click"
+                             ToolTip.Tip="Tables and curves switch. Single values (limits, thresholds, switches) always come from map 1. Proven on a car."/>
+                <RadioButton x:Name="MapSwitchScopeFull" GroupName="MapSwitchScope"
+                             Content="Full tune" Click="MapSwitchTrigger_Click"
+                             ToolTip.Tip="Single values switch too, so map 2 is the whole tune: rev limiter, speed limiter, thresholds. Done by moving the DME's calibration base register. Not yet proven on a car."/>
+              </StackPanel>
+
               <Grid ColumnDefinitions="200,*" RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="6" ColumnSpacing="8">
                 <Button x:Name="MapSwitchLoadFlash" Grid.Row="0" Grid.Column="0" Content="External Flash / .0pa..."
                         HorizontalAlignment="Stretch" Click="MapSwitchLoadFlash_Click"
@@ -244,7 +254,7 @@
                          Text="Choose an external flash and its MPC flash."/>
 
               <TextBlock TextWrapping="Wrap" Opacity="0.6" FontSize="11"
-                         Text="Only maps and curves switch. Single values (limits, thresholds, switches) always come from map 1. Map 2 is stored inside the program area, so changing it needs a full program flash; map 1 can still be written with Flash Tune."/>
+                         Text="Map 2 is stored inside the program area, so changing it needs a full program flash; map 1 can still be written with Flash Tune."/>
           </StackPanel>
         </ScrollViewer>
         </Panel>

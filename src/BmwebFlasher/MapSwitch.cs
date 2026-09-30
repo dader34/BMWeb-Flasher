@@ -16,8 +16,19 @@ namespace BmwebFlasher
     ///
     ///   - Every table/axis lookup goes through 16 routines in the MPC that take
     ///     the table pointer in r3. Each gets a hook: when the map flag is set
-    ///     and r3 points into the calibration, 0xA0000 is added. Single values
-    ///     (read relative to r2) are NOT redirected and always come from map 1.
+    ///     and r3 points into the calibration, 0xA0000 is added.
+    ///
+    ///   - Single values are read inline, relative to r2, at some 4,400 sites,
+    ///     so they cannot be hooked one by one. The program sets
+    ///     r2 = 0xFFE47FF0 once, at start (three start sequences, no interrupt
+    ///     prologue touches it), never stores through it, never stores a
+    ///     pointer derived from it, and every offset used lies inside the
+    ///     calibration. So the <see cref="Scope.FullTune"/> build moves r2 by
+    ///     0xA0000 while map 2 is selected: at stored-data restore, and at the
+    ///     gesture. Pointers derived from a moved r2 point into map 2 already
+    ///     and fall outside the range the lookup hooks redirect, so nothing is
+    ///     redirected twice. <see cref="Scope.MapsOnly"/> leaves r2 alone and
+    ///     single values always come from map 1.
     ///
     ///   - The routine that builds CAN frame 0x316 (engine speed for the cluster)
     ///     is hooked where it stores the rpm. With the engine stopped and the car
@@ -233,6 +244,23 @@ namespace BmwebFlasher
         public static string Describe(Trigger trigger)
             => trigger == Trigger.DscButton ? "DSC button pressed 4 times" : "brake + full throttle held 5 s";
 
+        /// <summary>
+        /// How much of the tune switches.
+        ///
+        ///   MapsOnly   tables and curves; single values stay map 1's.
+        ///   FullTune   single values too, by moving r2, see the class summary.
+        /// </summary>
+        public enum Scope { MapsOnly, FullTune }
+
+        public const Scope DefaultScope = Scope.MapsOnly;
+
+        public static string Describe(Scope scope)
+            => scope == Scope.FullTune ? "full tune" : "maps only";
+
+        /// <summary>r2 as the program sets it: the calibration's small-data base.</summary>
+        private const int R2High = -0x1C;                 // lis r2, -0x1C  -> 0xFFE40000
+        private const int R2Low = 0x7FF0;                 // ori r2, r2, 0x7FF0
+
         /// <summary>A version of the code: what triggers the switch and how the map is shown at power-up.</summary>
         internal readonly struct Version
         {
@@ -240,31 +268,36 @@ namespace BmwebFlasher
             public readonly StartupIndication Startup;
             /// <summary>Only meaningful for the DSC trigger.</summary>
             public readonly DscWatch Watch;
+            public readonly Scope Scope;
 
-            public Version(Trigger trigger, StartupIndication startup, DscWatch watch = DscWatch.Car)
+            public Version(Trigger trigger, StartupIndication startup, DscWatch watch = DscWatch.Car,
+                Scope scope = Scope.MapsOnly)
             {
                 Trigger = trigger;
                 Startup = startup;
                 Watch = trigger == Trigger.DscButton ? watch : DscWatch.Car;
+                Scope = scope;
             }
 
             public static bool operator ==(Version a, Version b)
-                => a.Trigger == b.Trigger && a.Startup == b.Startup && a.Watch == b.Watch;
+                => a.Trigger == b.Trigger && a.Startup == b.Startup && a.Watch == b.Watch && a.Scope == b.Scope;
             public static bool operator !=(Version a, Version b) => !(a == b);
             public override bool Equals(object obj) => obj is Version v && this == v;
-            public override int GetHashCode() => ((int)Trigger * 16 + (int)Startup) * 4 + (int)Watch;
+            public override int GetHashCode() => (((int)Trigger * 16 + (int)Startup) * 4 + (int)Watch) * 2 + (int)Scope;
         }
 
-        /// <summary>The version built today for a trigger.</summary>
-        private static Version CurrentVersion(Trigger trigger)
-            => new Version(trigger, StartupIndication.ImmediateLong);
+        /// <summary>The version built today for a trigger and scope.</summary>
+        private static Version CurrentVersion(Trigger trigger, Scope scope)
+            => new Version(trigger, StartupIndication.ImmediateLong, DscWatch.Car, scope);
 
-        private static bool IsCurrent(Version version) => version == CurrentVersion(version.Trigger);
+        private static bool IsCurrent(Version version) => version == CurrentVersion(version.Trigger, version.Scope);
 
         private static readonly Version[] KnownVersions =
         {
-            CurrentVersion(Trigger.DscButton),
-            CurrentVersion(Trigger.Pedals),
+            CurrentVersion(Trigger.DscButton, Scope.MapsOnly),
+            CurrentVersion(Trigger.DscButton, Scope.FullTune),
+            CurrentVersion(Trigger.Pedals, Scope.MapsOnly),
+            CurrentVersion(Trigger.Pedals, Scope.FullTune),
             new Version(Trigger.DscButton, StartupIndication.ImmediateLong, DscWatch.First),
             new Version(Trigger.Pedals, StartupIndication.Immediate),
             new Version(Trigger.Pedals, StartupIndication.None),
@@ -349,6 +382,9 @@ namespace BmwebFlasher
         /// <summary>The trigger a patched MPC switches on; null when it is not patched.</summary>
         public static Trigger? InstalledTrigger(byte[] mpc) => VersionOf(mpc)?.Trigger;
 
+        /// <summary>How much of the tune a patched MPC switches; null when it is not patched.</summary>
+        public static Scope? InstalledScope(byte[] mpc) => VersionOf(mpc)?.Scope;
+
         private static Version? VersionOf(byte[] mpc)
         {
             foreach (Version version in KnownVersions)
@@ -397,6 +433,9 @@ namespace BmwebFlasher
 
         /// <summary>The trigger the car's map switch uses, from the same bytes; null when it carries none.</summary>
         public static Trigger? TriggerOnCar(byte[] freeArea) => VersionOnCar(freeArea)?.Trigger;
+
+        /// <summary>How much of the tune the car's map switch switches; null when it carries none.</summary>
+        public static Scope? ScopeOnCar(byte[] freeArea) => VersionOnCar(freeArea)?.Scope;
 
         private static void CheckFreeArea(byte[] freeArea)
         {
@@ -585,14 +624,16 @@ namespace BmwebFlasher
         /// stores a copy of map 1. The caller's arrays are left alone.
         /// </summary>
         public static Result Build(byte[] flash, byte[] mpc, byte[] map1, byte[] map2)
-            => Build(flash, mpc, map1, map2, DefaultTrigger);
+            => Build(flash, mpc, map1, map2, DefaultTrigger, DefaultScope);
 
         /// <summary>
         /// As <see cref="Build(byte[], byte[], byte[], byte[])"/>, choosing the
-        /// trigger. A pair that carries the other trigger has its code replaced.
+        /// trigger and the scope. A pair that carries another choice has its
+        /// code replaced.
         /// </summary>
-        public static Result Build(byte[] flash, byte[] mpc, byte[] map1, byte[] map2, Trigger trigger)
-            => Build(flash, mpc, map1, map2, CurrentVersion(trigger));
+        public static Result Build(byte[] flash, byte[] mpc, byte[] map1, byte[] map2, Trigger trigger,
+            Scope scope = Scope.MapsOnly)
+            => Build(flash, mpc, map1, map2, CurrentVersion(trigger, scope));
 
         /// <summary>
         /// As <see cref="Build(byte[], byte[], byte[], byte[])"/>, choosing one
@@ -664,7 +705,7 @@ namespace BmwebFlasher
             if (CarriesVersion(mpc, version))
             {
                 result.Log.Add("Code: image already carries this version of the map switch (" +
-                               Describe(version.Trigger) + "), left unchanged");
+                               Describe(version.Trigger) + ", " + Describe(version.Scope) + "), left unchanged");
                 CorrectRomTestSum(result);
                 return result;
             }
@@ -678,9 +719,9 @@ namespace BmwebFlasher
                 for (int i = MpcFreeStart; i < MpcFreeEnd; i++)
                     result.Mpc[i] = 0xFF;
                 result.WasUpdated = true;
-                result.Log.Add(was.Trigger == version.Trigger
+                result.Log.Add(was.Trigger == version.Trigger && was.Scope == version.Scope
                     ? "Code: replaced the earlier version of the map switch"
-                    : "Code: replaced the map switch, trigger was " + Describe(was.Trigger));
+                    : "Code: replaced the map switch, was " + Describe(was.Trigger) + ", " + Describe(was.Scope));
             }
 
             Buffer.BlockCopy(code, 0, result.Mpc, MpcFreeStart, code.Length);
@@ -692,7 +733,8 @@ namespace BmwebFlasher
 
             result.Log.Add("Code: " + LookupEntries.Length + " lookup hooks, gesture/tach routine and " +
                            "stored-data routines, " + code.Length + " bytes at MPC 0x" +
-                           MpcFreeStart.ToString("X") + ", trigger: " + Describe(version.Trigger));
+                           MpcFreeStart.ToString("X") + ", trigger: " + Describe(version.Trigger) +
+                           ", switches " + Describe(version.Scope));
             CorrectRomTestSum(result);
             return result;
         }
@@ -836,9 +878,9 @@ namespace BmwebFlasher
             }
 
             if (dsc)
-                EmitDscGesture(a, flag, count, disp, storeDisp, version.Watch);
+                EmitDscGesture(a, flag, count, disp, storeDisp, version.Watch, version.Scope);
             else
-                EmitPedalGesture(a, flag, count, disp, storeDisp);
+                EmitPedalGesture(a, flag, count, disp, storeDisp, version.Scope);
 
             a.Label("show");
             a.Emit(loadDisp(12, disp, 13)); a.Emit(Cmpwi(12, 0)); a.Bc(Beq, "store");
@@ -870,8 +912,24 @@ namespace BmwebFlasher
         /// leave DSC as it was. The count is dropped when the next change
         /// does not come within the window.
         /// </summary>
+        /// <summary>
+        /// For the full-tune scope: points r2 at the selected map's single
+        /// values, from bit 0 of the flag in <paramref name="flagReg"/>.
+        /// r2 is set outright, not moved, so it is safe to run any number of
+        /// times. Clobbers r0 and cr0.
+        /// </summary>
+        private static void EmitBaseRegister(Asm a, int flagReg, Scope scope, string label)
+        {
+            if (scope != Scope.FullTune)
+                return;
+            a.Emit(Lis(2, R2High)); a.Emit(Ori(2, 2, R2Low));
+            a.Emit(AndiDot(0, flagReg, 1)); a.Bc(Beq, label);
+            a.Emit(Addis(2, 2, Map2DeltaHigh));
+            a.Label(label);
+        }
+
         private static void EmitDscGesture(Asm a, int flag, int count, int disp, Func<int, int, int, uint> storeDisp,
-            DscWatch watch)
+            DscWatch watch, Scope scope)
         {
             int presses = Off(RamPressCounter);
             int state = watch == DscWatch.Car ? VarDscState : FirstVarDscState;
@@ -889,6 +947,7 @@ namespace BmwebFlasher
             a.Emit(Cmplwi(12, DscPresses)); a.Bc(Blt, "show");
 
             a.Emit(Xori(11, 11, 1)); a.Emit(Stb(11, flag, 13));
+            EmitBaseRegister(a, 11, scope, "base");
             a.Emit(Li(12, 0)); a.Emit(Sth(12, count, 13)); a.Emit(Stb(12, presses, 13));
             a.Emit(Li(12, 1)); a.Emit(Stb(12, NvSaveRequest, 13));
             a.Emit(Li(12, DisplayCalls)); a.Emit(storeDisp(12, disp, 13));
@@ -903,7 +962,8 @@ namespace BmwebFlasher
         }
 
         /// <summary>The earlier gesture: both brake inputs set and the pedal floored, held.</summary>
-        private static void EmitPedalGesture(Asm a, int flag, int count, int disp, Func<int, int, int, uint> storeDisp)
+        private static void EmitPedalGesture(Asm a, int flag, int count, int disp, Func<int, int, int, uint> storeDisp,
+            Scope scope)
         {
             a.Emit(Lbz(12, VarBrakeA, 13)); a.Emit(Cmpwi(12, 0)); a.Bc(Beq, "idle");
             a.Emit(Lbz(12, VarBrakeB, 13)); a.Emit(Cmpwi(12, 0)); a.Bc(Beq, "idle");
@@ -915,6 +975,7 @@ namespace BmwebFlasher
             a.Emit(Cmplwi(12, HoldCalls)); a.Bc(Blt, "show");
 
             a.Emit(Xori(11, 11, 1)); a.Emit(Ori(11, 11, 2)); a.Emit(Stb(11, flag, 13));
+            EmitBaseRegister(a, 11, scope, "base");
             a.Emit(Li(12, 0)); a.Emit(Sth(12, count, 13));
             a.Emit(Li(12, 1)); a.Emit(Stb(12, NvSaveRequest, 13));
             a.Emit(Li(12, DisplayCalls)); a.Emit(storeDisp(12, disp, 13));
@@ -962,6 +1023,7 @@ namespace BmwebFlasher
             a.Emit(Sth(12, Off(RamHoldCounter), 13));
             if (version.Trigger == Trigger.DscButton)
                 a.Emit(Stb(12, Off(RamPressCounter), 13));
+            EmitBaseRegister(a, 12, version.Scope, "base");   // map 1
             EmitStartup(a, 12, version.Startup);
             a.Emit(Blr);
             return a;
@@ -973,6 +1035,7 @@ namespace BmwebFlasher
             a.Emit(Lbz(12, 0, 3));
             a.Emit(Srwi(11, 12, 7)); a.Emit(Stb(11, Off(RamFlag), 13));
             a.Emit(AndiDot(12, 12, 0x7F)); a.Emit(Stb(12, NvVar, 13));
+            EmitBaseRegister(a, 11, version.Scope, "base");
             a.Emit(Li(11, 0)); a.Emit(Sth(11, Off(RamHoldCounter), 13));
             if (version.Trigger == Trigger.DscButton)
                 a.Emit(Stb(11, Off(RamPressCounter), 13));
@@ -1021,6 +1084,7 @@ namespace BmwebFlasher
         internal static uint Li(int rt, int v) => D(14, rt, 0, S16(v));
         internal static uint Addi(int rt, int ra, int v) => D(14, rt, ra, S16(v));
         internal static uint Addis(int rt, int ra, int v) => D(15, rt, ra, S16(v));
+        internal static uint Lis(int rt, int v) => Addis(rt, 0, v);
         internal static uint Cmpwi(int ra, int v) => D(11, 0, ra, S16(v));
         internal static uint Cmplwi(int ra, int v) => D(10, 0, ra, U16(v));
         internal static uint Cmpw(int ra, int rb) => (31u << 26) | ((uint)ra << 16) | ((uint)rb << 11);

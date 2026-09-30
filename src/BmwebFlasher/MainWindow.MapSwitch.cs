@@ -130,8 +130,9 @@ namespace BmwebFlasher
         /// <summary>What the car's MPC carries; null when not read.</summary>
         private MapSwitch.CarState? _carMapSwitch;
 
-        /// <summary>The trigger of the map switch on the car; null when there is none or it was not read.</summary>
+        /// <summary>The trigger and scope of the map switch on the car; null when there is none or it was not read.</summary>
         private MapSwitch.Trigger? _carTrigger;
+        private MapSwitch.Scope? _carScope;
 
         /// <summary>The data version of the map 2 stored on the car; null when there is none or it was not read.</summary>
         private string _carMap2Version;
@@ -140,6 +141,7 @@ namespace BmwebFlasher
         {
             _carMapSwitch = null;
             _carTrigger = null;
+            _carScope = null;
             _carMap2Version = null;
             RefreshReadInstalledMaps();
         }
@@ -256,6 +258,7 @@ namespace BmwebFlasher
 
                 _carMapSwitch = MapSwitch.StateOnCar(freeArea);
                 _carTrigger = MapSwitch.TriggerOnCar(freeArea);
+                _carScope = MapSwitch.ScopeOnCar(freeArea);
 
                 if (_carMapSwitch == MapSwitch.CarState.Current ||
                     _carMapSwitch == MapSwitch.CarState.Earlier)
@@ -291,6 +294,7 @@ namespace BmwebFlasher
                 case MapSwitch.CarState.Earlier:
                     return ", map switch installed (" +
                            (_carTrigger != null ? MapSwitch.Describe(_carTrigger.Value) : "unknown trigger") +
+                           (_carScope != null ? ", " + MapSwitch.Describe(_carScope.Value) : string.Empty) +
                            (_carMapSwitch == MapSwitch.CarState.Earlier ? ", earlier version)" : ")") +
                            (_carMap2Version != null ? ", map 2 " + _carMap2Version : ", no map 2 stored");
                 case MapSwitch.CarState.Unrecognised:
@@ -344,23 +348,26 @@ namespace BmwebFlasher
             MapSwitchReport_Box.Text = blocked ?? DescribeMapSwitchInputs();
         }
 
-        /// <summary>What Build will do to the pair, given the chosen trigger.</summary>
+        /// <summary>What Build will do to the pair, given the chosen trigger and scope.</summary>
         private string DescribeMapSwitchInputs()
         {
-            MapSwitch.Trigger? installed = MapSwitch.InstalledTrigger(_mapSwitchMpc);
-            if (installed == null)
+            MapSwitch.Trigger? trigger = MapSwitch.InstalledTrigger(_mapSwitchMpc);
+            MapSwitch.Scope? scope = MapSwitch.InstalledScope(_mapSwitchMpc);
+            if (trigger == null || scope == null)
                 return "Ready to build.";
+            string installed = MapSwitch.Describe(trigger.Value) + ", " + MapSwitch.Describe(scope.Value);
             if (!MapSwitch.IsCurrentVersion(_mapSwitchMpc))
-                return "This pair carries an earlier version of the map switch (" +
-                       MapSwitch.Describe(installed.Value) + "). Build updates it.";
-            if (installed == SelectedTrigger)
-                return "This pair already carries the map switch with this trigger. Build replaces its maps.";
-            return "This pair carries the map switch with the other trigger (" +
-                   MapSwitch.Describe(installed.Value) + "). Build changes it.";
+                return "This pair carries an earlier version of the map switch (" + installed + "). Build updates it.";
+            if (trigger == SelectedTrigger && scope == SelectedScope)
+                return "This pair already carries the map switch with these choices. Build replaces its maps.";
+            return "This pair carries the map switch with other choices (" + installed + "). Build changes it.";
         }
 
         private MapSwitch.Trigger SelectedTrigger =>
             MapSwitchTriggerPedals?.IsChecked == true ? MapSwitch.Trigger.Pedals : MapSwitch.Trigger.DscButton;
+
+        private MapSwitch.Scope SelectedScope =>
+            MapSwitchScopeFull?.IsChecked == true ? MapSwitch.Scope.FullTune : MapSwitch.Scope.MapsOnly;
 
         private void MapSwitchTrigger_Click(object sender, RoutedEventArgs e)
             => MapSwitchInputsChanged();
@@ -565,7 +572,7 @@ namespace BmwebFlasher
             try
             {
                 MapSwitch.Result built = MapSwitch.Build(
-                    _mapSwitchFlash, _mapSwitchMpc, _mapSwitchMap1, _mapSwitchMap2, SelectedTrigger);
+                    _mapSwitchFlash, _mapSwitchMpc, _mapSwitchMap1, _mapSwitchMap2, SelectedTrigger, SelectedScope);
 
                 // An EWS-deleted program needs the immobilizer off in the
                 // tunes too; see MatchImmobilizerAsync.

@@ -348,6 +348,63 @@ namespace BmwebFlasher.Tests
             Assert.Equal(pedals.Mpc, same.Mpc);
         }
 
+        // Every instruction of the patch: from the first lookup stub to the
+        // end of the last stored-data routine.
+        private static uint[] PatchCode(byte[] image)
+        {
+            uint save = Get32(image, NvDescriptor + 8), end = save;
+            while (Get32(image, (int)end) != 0x4E800020) end += 4;     // blr of NvSave
+            var words = new uint[(end + 4 - CodeStart) / 4];
+            for (int i = 0; i < words.Length; i++)
+                words[i] = Get32(image, CodeStart + 4 * i);
+            return words;
+        }
+
+        [Fact]
+        public void TheFullTuneScopeMovesTheCalibrationBaseRegister()
+        {
+            var (flash, mpc) = SyntheticPair();
+            uint lis = MapSwitch.Lis(2, -0x1C), ori = MapSwitch.Ori(2, 2, 0x7FF0), addis = MapSwitch.Addis(2, 2, 0xA);
+            Assert.Equal(0x3C40FFE4u, lis);
+            Assert.Equal(0x60427FF0u, ori);
+            Assert.Equal(0x3C42000Au, addis);
+
+            foreach (var trigger in new[] { MapSwitch.Trigger.DscButton, MapSwitch.Trigger.Pedals })
+            {
+                // Maps only: r2 is never touched.
+                uint[] mapsOnly = PatchCode(MapSwitch.Build(flash, mpc, null, null, trigger, MapSwitch.Scope.MapsOnly).Mpc);
+                Assert.DoesNotContain(lis, mapsOnly);
+                Assert.DoesNotContain(addis, mapsOnly);
+
+                // Full tune: r2 is set outright at the gesture, at init and at
+                // restore, and moved by 0xA0000 for map 2.
+                byte[] fullMpc = MapSwitch.Build(flash, mpc, null, null, trigger, MapSwitch.Scope.FullTune).Mpc;
+                uint[] full = PatchCode(fullMpc);
+                Assert.Equal(3, Array.FindAll(full, w => w == lis).Length);
+                Assert.Equal(3, Array.FindAll(full, w => w == ori).Length);
+                Assert.Equal(3, Array.FindAll(full, w => w == addis).Length);
+
+                // The lookup hooks are the same: they only look at the pointer.
+                for (int i = 0; i < 16 * 9; i++)
+                    Assert.Equal(mapsOnly[i], full[i]);
+
+                Assert.True(MapSwitch.IsCurrentVersion(fullMpc));
+                Assert.Equal(MapSwitch.Scope.FullTune, MapSwitch.InstalledScope(fullMpc));
+                Assert.Equal(trigger, MapSwitch.InstalledTrigger(fullMpc));
+            }
+
+            Assert.Equal(MapSwitch.Scope.MapsOnly, MapSwitch.DefaultScope);
+            Assert.Equal(MapSwitch.Scope.MapsOnly, MapSwitch.InstalledScope(MapSwitch.Build(flash, mpc, null, null).Mpc));
+
+            // Changing scope replaces the code, like changing trigger.
+            MapSwitch.Result maps = MapSwitch.Build(flash, mpc, null, null, MapSwitch.Trigger.DscButton);
+            MapSwitch.Result widened = MapSwitch.Build(maps.Flash, maps.Mpc, null, null,
+                MapSwitch.Trigger.DscButton, MapSwitch.Scope.FullTune);
+            Assert.True(widened.WasUpdated);
+            Assert.Equal(MapSwitch.Build(flash, mpc, null, null, MapSwitch.Trigger.DscButton, MapSwitch.Scope.FullTune).Mpc,
+                         widened.Mpc);
+        }
+
         [Fact]
         public void TheFirstDscBuildIsRecognisedAsEarlierAndUpdated()
         {
