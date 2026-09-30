@@ -130,12 +130,16 @@ namespace BmwebFlasher
         /// <summary>What the car's MPC carries; null when not read.</summary>
         private MapSwitch.CarState? _carMapSwitch;
 
+        /// <summary>The trigger of the map switch on the car; null when there is none or it was not read.</summary>
+        private MapSwitch.Trigger? _carTrigger;
+
         /// <summary>The data version of the map 2 stored on the car; null when there is none or it was not read.</summary>
         private string _carMap2Version;
 
         private void ForgetCarMapSwitch()
         {
             _carMapSwitch = null;
+            _carTrigger = null;
             _carMap2Version = null;
             RefreshReadInstalledMaps();
         }
@@ -251,6 +255,7 @@ namespace BmwebFlasher
                     return;
 
                 _carMapSwitch = MapSwitch.StateOnCar(freeArea);
+                _carTrigger = MapSwitch.TriggerOnCar(freeArea);
 
                 if (_carMapSwitch == MapSwitch.CarState.Current ||
                     _carMapSwitch == MapSwitch.CarState.Earlier)
@@ -284,8 +289,9 @@ namespace BmwebFlasher
                     return ", no map switch";
                 case MapSwitch.CarState.Current:
                 case MapSwitch.CarState.Earlier:
-                    return ", map switch installed" +
-                           (_carMapSwitch == MapSwitch.CarState.Earlier ? " (earlier version)" : string.Empty) +
+                    return ", map switch installed (" +
+                           (_carTrigger != null ? MapSwitch.Describe(_carTrigger.Value) : "unknown trigger") +
+                           (_carMapSwitch == MapSwitch.CarState.Earlier ? ", earlier version)" : ")") +
                            (_carMap2Version != null ? ", map 2 " + _carMap2Version : ", no map 2 stored");
                 case MapSwitch.CarState.Unrecognised:
                     return ", MPC carries an unrecognised modification";
@@ -335,13 +341,29 @@ namespace BmwebFlasher
                 blocked = "The external flash and the MPC flash are not a matching pair.";
 
             MapSwitchBuild.IsEnabled = blocked == null;
-            MapSwitchReport_Box.Text = blocked ??
-                (MapSwitch.IsCurrentVersion(_mapSwitchMpc)
-                    ? "This pair already carries the map switch. Build replaces its maps."
-                    : MapSwitch.IsAlreadyPatched(_mapSwitchMpc)
-                        ? "This pair carries an earlier version of the map switch. Build updates it."
-                        : "Ready to build.");
+            MapSwitchReport_Box.Text = blocked ?? DescribeMapSwitchInputs();
         }
+
+        /// <summary>What Build will do to the pair, given the chosen trigger.</summary>
+        private string DescribeMapSwitchInputs()
+        {
+            MapSwitch.Trigger? installed = MapSwitch.InstalledTrigger(_mapSwitchMpc);
+            if (installed == null)
+                return "Ready to build.";
+            if (!MapSwitch.IsCurrentVersion(_mapSwitchMpc))
+                return "This pair carries an earlier version of the map switch (" +
+                       MapSwitch.Describe(installed.Value) + "). Build updates it.";
+            if (installed == SelectedTrigger)
+                return "This pair already carries the map switch with this trigger. Build replaces its maps.";
+            return "This pair carries the map switch with the other trigger (" +
+                   MapSwitch.Describe(installed.Value) + "). Build changes it.";
+        }
+
+        private MapSwitch.Trigger SelectedTrigger =>
+            MapSwitchTriggerPedals?.IsChecked == true ? MapSwitch.Trigger.Pedals : MapSwitch.Trigger.DscButton;
+
+        private void MapSwitchTrigger_Click(object sender, RoutedEventArgs e)
+            => MapSwitchInputsChanged();
 
         private async void MapSwitchLoadFlash_Click(object sender, RoutedEventArgs e)
         {
@@ -543,7 +565,7 @@ namespace BmwebFlasher
             try
             {
                 MapSwitch.Result built = MapSwitch.Build(
-                    _mapSwitchFlash, _mapSwitchMpc, _mapSwitchMap1, _mapSwitchMap2);
+                    _mapSwitchFlash, _mapSwitchMpc, _mapSwitchMap1, _mapSwitchMap2, SelectedTrigger);
 
                 // An EWS-deleted program needs the immobilizer off in the
                 // tunes too; see MatchImmobilizerAsync.

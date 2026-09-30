@@ -289,9 +289,7 @@ namespace BmwebFlasher.Tests
             var (flash, mpc) = SyntheticPair();
             MapSwitch.Result fresh = MapSwitch.Build(flash, mpc, null, null);
 
-            foreach (var version in new[]
-                     { MapSwitch.StartupIndication.Immediate, MapSwitch.StartupIndication.Delayed,
-                       MapSwitch.StartupIndication.None })
+            foreach (var version in EarlierVersions)
             {
                 MapSwitch.Result old = MapSwitch.Build(flash, mpc, null, null, version);
                 Assert.True(MapSwitch.IsAlreadyPatched(old.Mpc));
@@ -301,6 +299,160 @@ namespace BmwebFlasher.Tests
                 Assert.True(updated.WasUpdated);
                 Assert.Equal(fresh.Mpc, updated.Mpc);
                 Assert.Equal(fresh.Flash, updated.Flash);
+            }
+        }
+
+        // The earlier pedal-triggered versions, by their start-up indication.
+        // (Pedals with ImmediateLong is still built today, as the other trigger.)
+        private static readonly MapSwitch.StartupIndication[] EarlierVersions =
+        {
+            MapSwitch.StartupIndication.Immediate, MapSwitch.StartupIndication.Delayed,
+            MapSwitch.StartupIndication.None,
+        };
+
+        [Fact]
+        public void EitherTriggerCanBeBuiltAndTheyReplaceEachOther()
+        {
+            var (flash, mpc) = SyntheticPair();
+            MapSwitch.Result dsc = MapSwitch.Build(flash, mpc, null, null, MapSwitch.Trigger.DscButton);
+            MapSwitch.Result pedals = MapSwitch.Build(flash, mpc, null, null, MapSwitch.Trigger.Pedals);
+
+            Assert.Equal(MapSwitch.Trigger.DscButton, MapSwitch.DefaultTrigger);
+            Assert.Equal(dsc.Mpc, MapSwitch.Build(flash, mpc, null, null).Mpc);
+            Assert.NotEqual(dsc.Mpc, pedals.Mpc);
+
+            // Both are current versions, told apart by their trigger.
+            foreach (var r in new[] { dsc, pedals })
+            {
+                Assert.True(MapSwitch.IsAlreadyPatched(r.Mpc));
+                Assert.True(MapSwitch.IsCurrentVersion(r.Mpc));
+                Assert.Null(MapSwitch.BlockedReason(r.Flash, r.Mpc));
+            }
+            Assert.Equal(MapSwitch.Trigger.DscButton, MapSwitch.InstalledTrigger(dsc.Mpc));
+            Assert.Equal(MapSwitch.Trigger.Pedals, MapSwitch.InstalledTrigger(pedals.Mpc));
+            Assert.Null(MapSwitch.InstalledTrigger(mpc));
+
+            // Building the other trigger over a pair replaces its code.
+            MapSwitch.Result changed = MapSwitch.Build(dsc.Flash, dsc.Mpc, null, null, MapSwitch.Trigger.Pedals);
+            Assert.True(changed.WasUpdated);
+            Assert.Equal(pedals.Mpc, changed.Mpc);
+            Assert.Equal(pedals.Flash, changed.Flash);
+
+            MapSwitch.Result back = MapSwitch.Build(changed.Flash, changed.Mpc, null, null, MapSwitch.Trigger.DscButton);
+            Assert.True(back.WasUpdated);
+            Assert.Equal(dsc.Mpc, back.Mpc);
+
+            // The same trigger again leaves the code alone.
+            MapSwitch.Result same = MapSwitch.Build(pedals.Flash, pedals.Mpc, null, null, MapSwitch.Trigger.Pedals);
+            Assert.False(same.WasUpdated);
+            Assert.Equal(pedals.Mpc, same.Mpc);
+        }
+
+        [Fact]
+        public void TheFirstDscBuildIsRecognisedAsEarlierAndUpdated()
+        {
+            var (flash, mpc) = SyntheticPair();
+            var first = new MapSwitch.Version(MapSwitch.Trigger.DscButton,
+                MapSwitch.StartupIndication.ImmediateLong, MapSwitch.DscWatch.First);
+            MapSwitch.Result old = MapSwitch.Build(flash, mpc, null, null, first);
+            MapSwitch.Result fresh = MapSwitch.Build(flash, mpc, null, null);
+
+            // It watched the last byte of the frame; the current build the first.
+            uint[] tach = TachRoutine(old.Mpc);
+            Assert.Contains(MapSwitch.Lbz(12, -0x3B3D, 13), tach);
+            Assert.Contains(MapSwitch.AndiDot(12, 12, 0x0C), tach);
+            Assert.NotEqual(old.Mpc, fresh.Mpc);
+
+            Assert.True(MapSwitch.IsAlreadyPatched(old.Mpc));
+            Assert.False(MapSwitch.IsCurrentVersion(old.Mpc));
+            Assert.Equal(MapSwitch.Trigger.DscButton, MapSwitch.InstalledTrigger(old.Mpc));
+            Assert.Null(MapSwitch.BlockedReason(old.Flash, old.Mpc));
+
+            var area = new byte[MapSwitch.CarCheckLength];
+            Array.Copy(old.Mpc, MapSwitch.CarCheckOffset, area, 0, area.Length);
+            Assert.Equal(MapSwitch.CarState.Earlier, MapSwitch.StateOnCar(area));
+            Assert.Equal(MapSwitch.Trigger.DscButton, MapSwitch.TriggerOnCar(area));
+
+            MapSwitch.Result updated = MapSwitch.Build(old.Flash, old.Mpc, null, null);
+            Assert.True(updated.WasUpdated);
+            Assert.Equal(fresh.Mpc, updated.Mpc);
+        }
+
+        [Fact]
+        public void TheTriggerOnTheCarIsToldFromTheFreeArea()
+        {
+            var (flash, mpc) = SyntheticPair();
+            byte[] Area(byte[] image)
+            {
+                var area = new byte[MapSwitch.CarCheckLength];
+                Array.Copy(image, MapSwitch.CarCheckOffset, area, 0, area.Length);
+                return area;
+            }
+
+            byte[] dsc = MapSwitch.Build(flash, mpc, null, null, MapSwitch.Trigger.DscButton).Mpc;
+            byte[] pedals = MapSwitch.Build(flash, mpc, null, null, MapSwitch.Trigger.Pedals).Mpc;
+            byte[] old = MapSwitch.Build(flash, mpc, null, null, MapSwitch.StartupIndication.Delayed).Mpc;
+
+            Assert.Equal(MapSwitch.CarState.Current, MapSwitch.StateOnCar(Area(dsc)));
+            Assert.Equal(MapSwitch.CarState.Current, MapSwitch.StateOnCar(Area(pedals)));
+            Assert.Equal(MapSwitch.CarState.Earlier, MapSwitch.StateOnCar(Area(old)));
+            Assert.Equal(MapSwitch.Trigger.DscButton, MapSwitch.TriggerOnCar(Area(dsc)));
+            Assert.Equal(MapSwitch.Trigger.Pedals, MapSwitch.TriggerOnCar(Area(pedals)));
+            Assert.Equal(MapSwitch.Trigger.Pedals, MapSwitch.TriggerOnCar(Area(old)));
+            Assert.Null(MapSwitch.TriggerOnCar(Area(mpc)));
+        }
+
+        // Instructions of the tach routine: from its entry to the first
+        // stored-data routine.
+        private static uint[] TachRoutine(byte[] image)
+        {
+            uint entry = Get32(image, 0x4B6C4);
+            Assert.Equal(0x48000001u, entry & 0xFC000003);      // bl
+            uint start = 0x4B6C4 + (entry & 0x03FFFFFC), end = Get32(image, NvDescriptor);
+            var words = new uint[(end - start) / 4];
+            for (int i = 0; i < words.Length; i++)
+                words[i] = Get32(image, (int)start + 4 * i);
+            return words;
+        }
+
+        [Fact]
+        public void TheCurrentVersionWatchesTheDscStateAndNotThePedals()
+        {
+            var (flash, mpc) = SyntheticPair();
+            uint[] tach = TachRoutine(MapSwitch.Build(flash, mpc, null, null).Mpc);
+
+            // The first byte of the last 0x153 frame, masked to the DSC bit,
+            // is compared with the bit kept in the flag; the pedals are not read.
+            Assert.Contains(MapSwitch.Lbz(12, -0x3B44, 13), tach);
+            Assert.Contains(MapSwitch.AndiDot(12, 12, 0x02), tach);
+            Assert.Contains(MapSwitch.Cmpw(12, 10), tach);
+            Assert.Contains(MapSwitch.Cmplwi(12, 4), tach);
+            Assert.DoesNotContain(MapSwitch.Lbz(12, -0x4001, 13), tach);
+            Assert.DoesNotContain(MapSwitch.Lbz(12, -0x4061, 13), tach);
+
+            // The window between presses is 2 s at 100 calls a second.
+            Assert.Equal(4, MapSwitch.DscPresses);
+            Assert.Equal(2, MapSwitch.DscPressWindowSeconds);
+            Assert.Contains(MapSwitch.Li(10, 200), tach);
+            Assert.DoesNotContain(MapSwitch.Cmplwi(12, 500), tach);
+        }
+
+        [Fact]
+        public void ThePedalVersionsReadThePedalsAndNotTheDscState()
+        {
+            var (flash, mpc) = SyntheticPair();
+            var images = new System.Collections.Generic.List<byte[]>
+                { MapSwitch.Build(flash, mpc, null, null, MapSwitch.Trigger.Pedals).Mpc };
+            foreach (var version in EarlierVersions)
+                images.Add(MapSwitch.Build(flash, mpc, null, null, version).Mpc);
+
+            foreach (byte[] image in images)
+            {
+                uint[] tach = TachRoutine(image);
+                Assert.Contains(MapSwitch.Lbz(12, -0x4001, 13), tach);
+                Assert.Contains(MapSwitch.Lbz(12, -0x4061, 13), tach);
+                Assert.Contains(MapSwitch.Cmplwi(12, 500), tach);
+                Assert.DoesNotContain(MapSwitch.Lbz(12, -0x3B44, 13), tach);
             }
         }
 
@@ -346,9 +498,13 @@ namespace BmwebFlasher.Tests
             }
 
             // Gesture, countdown and engine-running in the tach routine,
-            // then the two power-up routines. The byte counter is unused.
+            // then the two power-up routines. The byte at the old display
+            // counter's address now counts DSC presses: a press, the toggle,
+            // the window running out and engine-running in the tach routine,
+            // then the two power-up routines.
             Assert.Equal(5, wideStores);
-            Assert.Equal(0, byteStores);
+            Assert.Equal(MapSwitch.RamDisplayCounter, MapSwitch.RamPressCounter);
+            Assert.Equal(6, byteStores);
         }
 
         [Fact]
@@ -377,9 +533,7 @@ namespace BmwebFlasher.Tests
             Assert.Equal(MapSwitch.CarState.Current,
                 MapSwitch.StateOnCar(Area(MapSwitch.Build(flash, mpc, null, null).Mpc)));
 
-            foreach (var version in new[]
-                     { MapSwitch.StartupIndication.Immediate, MapSwitch.StartupIndication.Delayed,
-                       MapSwitch.StartupIndication.None })
+            foreach (var version in EarlierVersions)
                 Assert.Equal(MapSwitch.CarState.Earlier,
                     MapSwitch.StateOnCar(Area(MapSwitch.Build(flash, mpc, null, null, version).Mpc)));
 

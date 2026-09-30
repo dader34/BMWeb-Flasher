@@ -21,11 +21,20 @@ namespace BmwebFlasher
     ///
     ///   - The routine that builds CAN frame 0x316 (engine speed for the cluster)
     ///     is hooked where it stores the rpm. With the engine stopped and the car
-    ///     stationary, holding the brake and full throttle for 5 s toggles the
-    ///     map; the tach then shows 1000 rpm for map 1 or 2000 rpm for map 2.
-    ///     It is also shown once at ignition-on, for twice as long. Images
-    ///     carrying another version are recognised and brought up to date
+    ///     stationary, the chosen <see cref="Trigger"/> toggles the map: the DSC
+    ///     button pressed four times, or brake + full throttle held for 5 s. The
+    ///     tach then shows 1000 rpm for map 1 or 2000 rpm for map 2. It is also
+    ///     shown once at ignition-on, for twice as long. Images carrying another
+    ///     version, or the other trigger, are recognised and brought up to date
     ///     by <see cref="Build"/>.
+    ///
+    ///     The DSC button is not wired to the DME. The DSC module reports its
+    ///     state in CAN frame 0x153 (ASC1), which the DME keeps at RAM
+    ///     0x3FDCAC. A short press switches DTC on or off and flips bit 1 of
+    ///     the first byte there at once (0x80 / 0x82), see
+    ///     <see cref="VarDscState"/>. The stub counts changes of that bit
+    ///     that come within 2 s of each other; four short presses give four
+    ///     changes and leave DTC where it started.
     ///
     ///   - The selection is kept in bit 7 of stored-data block 56 (one byte that
     ///     stock code only ever sets to 0, 1 or 2), by replacing that block's
@@ -103,15 +112,66 @@ namespace BmwebFlasher
         private const int VarBrakeB = -0x4002;
 
         /// <summary>
+        /// The byte of the last CAN frame 0x153 (ASC1) from the DSC module
+        /// that follows a short press of the DSC button. The DME's copy
+        /// routine (MPC 0x4A480) keeps the frame's eight bytes at RAM 0x3FDCAC
+        /// in reverse order, so this first byte is CAN byte 7. Watched on the
+        /// car (2026-09-29): it reads 0x80, and 0x82 while DTC is on (the
+        /// "A in a circle" lamp), flipping at once with each short press.
+        /// Nothing else in it moves with the engine stopped.
+        ///
+        /// The published ASC1 layout calls byte 7 an alive counter; this
+        /// DSC module keeps its DTC state there. Byte 0 bit 2 (LV_ASC_PASV,
+        /// at 0x3FDCB3) is what the first build watched: it is DSC fully
+        /// off, which the button only gives after a ~2 s hold, so the changes
+        /// came too far apart to add up.
+        /// </summary>
+        private const int VarDscState = -0x3B44;
+        /// <summary>The bit of that byte a short press toggles.</summary>
+        public const int DscStateMask = 0x02;
+
+        /// <summary>What the first DSC build watched: DSC fully off, bits 2-3 of CAN byte 0.</summary>
+        private const int FirstVarDscState = -0x3B3D;
+        private const int FirstDscStateMask = 0x0C;
+
+        /// <summary>
+        /// Which byte and bit of the 0x153 frame a DSC build watches.
+        ///
+        ///   Car     the short-press (DTC) state, see <see cref="VarDscState"/>.
+        ///   First   the first build: DSC fully off, which needs a long press.
+        ///           Kept so an image carrying it is recognised and updated.
+        /// </summary>
+        internal enum DscWatch { Car, First }
+
+        /// <summary>
+        /// RAM worth reading on a car to see the trigger work (the DME
+        /// answers speicher_lesen_ascii on segment LAR for RAM): the last
+        /// 0x153 frame (8 bytes, CAN byte 7 first), and the DME's engine
+        /// speed, vehicle speed and the tach value the stub stores. The DSC
+        /// trigger was diagnosed this way on 2026-09-29.
+        /// </summary>
+        public const uint RamCanAsc1 = 0x3FDCAC;
+        public const uint RamDscState = (uint)((int)R13 + VarDscState);
+        public const uint RamEngineSpeed = (uint)((int)R13 + VarEngineSpeed);
+        public const uint RamVehicleSpeed = (uint)((int)R13 + VarVehicleSpeed);
+        public const uint RamTach = (uint)((int)R13 + TachVar);
+
+        /// <summary>
         /// RAM used by the patch. UNVERIFIED: these are gaps that look like
         /// alignment padding (a byte variable, three unreferenced bytes, then a
         /// 32-bit variable). No code addresses them directly, which is not proof
         /// that nothing uses them. Read them on a running car before trusting
         /// this build.
         /// </summary>
-        public const uint RamFlag = 0x3FA195;             // bit0 map, bit1 latched
-        public const uint RamHoldCounter = 0x3FA196;      // 16 bit
+        public const uint RamFlag = 0x3FA195;             // bit0 map, bit1 latched (pedal), bits 2-3 last DSC state
+        public const uint RamHoldCounter = 0x3FA196;      // 16 bit: the pedal hold, or the time since the last DSC press
         public const uint RamDisplayCounter = 0x3FA1ED;   // 8 bit
+        /// <summary>
+        /// How many DSC state changes have come in quick succession. The
+        /// byte display counter of the earlier versions, which this version
+        /// does not use: its display counter is <see cref="RamWideDisplayCounter"/>.
+        /// </summary>
+        public const uint RamPressCounter = RamDisplayCounter;
         /// <summary>
         /// The two bytes after the display counter, in the same gap. The
         /// delayed version counted down to its indication here. This
@@ -129,6 +189,11 @@ namespace BmwebFlasher
 
         private const int HoldCalls = 5 * CallsPerSecond;
         private const int DisplayCalls = 150;
+
+        /// <summary>How many DSC presses toggle the map, and how close together they must be.</summary>
+        public const int DscPresses = 4;
+        public const int DscPressWindowSeconds = 2;
+        private const int DscPressWindowCalls = DscPressWindowSeconds * CallsPerSecond;
 
         /// <summary>How long the tach shows the map at ignition-on.</summary>
         public const int StartupDisplaySeconds = 3;
@@ -154,12 +219,56 @@ namespace BmwebFlasher
         /// </summary>
         internal enum StartupIndication { None, Immediate, Delayed, ImmediateLong }
 
-        private const StartupIndication Current = StartupIndication.ImmediateLong;
+        /// <summary>
+        /// What toggles the map. Either can be built today; the caller chooses.
+        ///
+        ///   DscButton      the DSC button pressed four times.
+        ///   Pedals         brake and full throttle held for 5 s. The only
+        ///                  trigger of the earlier versions.
+        /// </summary>
+        public enum Trigger { Pedals, DscButton }
 
-        private static readonly StartupIndication[] KnownVersions =
+        public const Trigger DefaultTrigger = Trigger.DscButton;
+
+        public static string Describe(Trigger trigger)
+            => trigger == Trigger.DscButton ? "DSC button pressed 4 times" : "brake + full throttle held 5 s";
+
+        /// <summary>A version of the code: what triggers the switch and how the map is shown at power-up.</summary>
+        internal readonly struct Version
         {
-            StartupIndication.ImmediateLong, StartupIndication.Immediate,
-            StartupIndication.None, StartupIndication.Delayed,
+            public readonly Trigger Trigger;
+            public readonly StartupIndication Startup;
+            /// <summary>Only meaningful for the DSC trigger.</summary>
+            public readonly DscWatch Watch;
+
+            public Version(Trigger trigger, StartupIndication startup, DscWatch watch = DscWatch.Car)
+            {
+                Trigger = trigger;
+                Startup = startup;
+                Watch = trigger == Trigger.DscButton ? watch : DscWatch.Car;
+            }
+
+            public static bool operator ==(Version a, Version b)
+                => a.Trigger == b.Trigger && a.Startup == b.Startup && a.Watch == b.Watch;
+            public static bool operator !=(Version a, Version b) => !(a == b);
+            public override bool Equals(object obj) => obj is Version v && this == v;
+            public override int GetHashCode() => ((int)Trigger * 16 + (int)Startup) * 4 + (int)Watch;
+        }
+
+        /// <summary>The version built today for a trigger.</summary>
+        private static Version CurrentVersion(Trigger trigger)
+            => new Version(trigger, StartupIndication.ImmediateLong);
+
+        private static bool IsCurrent(Version version) => version == CurrentVersion(version.Trigger);
+
+        private static readonly Version[] KnownVersions =
+        {
+            CurrentVersion(Trigger.DscButton),
+            CurrentVersion(Trigger.Pedals),
+            new Version(Trigger.DscButton, StartupIndication.ImmediateLong, DscWatch.First),
+            new Version(Trigger.Pedals, StartupIndication.Immediate),
+            new Version(Trigger.Pedals, StartupIndication.None),
+            new Version(Trigger.Pedals, StartupIndication.Delayed),
         };
         private const int PedalFull = 0xF0;               // 93.75 %
         private const int PedalReleased = 0x20;           // 12.5 %
@@ -235,12 +344,17 @@ namespace BmwebFlasher
         /// True when the MPC carries the map switch, in this version or an
         /// earlier one.
         /// </summary>
-        public static bool IsAlreadyPatched(byte[] mpc)
+        public static bool IsAlreadyPatched(byte[] mpc) => VersionOf(mpc) != null;
+
+        /// <summary>The trigger a patched MPC switches on; null when it is not patched.</summary>
+        public static Trigger? InstalledTrigger(byte[] mpc) => VersionOf(mpc)?.Trigger;
+
+        private static Version? VersionOf(byte[] mpc)
         {
-            foreach (StartupIndication version in KnownVersions)
+            foreach (Version version in KnownVersions)
                 if (CarriesVersion(mpc, version))
-                    return true;
-            return false;
+                    return version;
+            return null;
         }
 
         /// <summary>
@@ -273,28 +387,48 @@ namespace BmwebFlasher
         /// </summary>
         public static CarState StateOnCar(byte[] freeArea)
         {
+            if (FreeAreaIsEmpty(freeArea))
+                return CarState.NotInstalled;
+            Version? version = VersionOnCar(freeArea);
+            if (version == null)
+                return CarState.Unrecognised;
+            return IsCurrent(version.Value) ? CarState.Current : CarState.Earlier;
+        }
+
+        /// <summary>The trigger the car's map switch uses, from the same bytes; null when it carries none.</summary>
+        public static Trigger? TriggerOnCar(byte[] freeArea) => VersionOnCar(freeArea)?.Trigger;
+
+        private static void CheckFreeArea(byte[] freeArea)
+        {
             if (freeArea == null || freeArea.Length != CarCheckLength)
                 throw new ArgumentException("Expected the first 0x" + CarCheckLength.ToString("X") +
                                             " bytes of the MPC's free area.", nameof(freeArea));
+        }
 
-            bool MatchesFrom(byte[] code)
-            {
-                for (int i = 0; i < freeArea.Length; i++)
-                    if (freeArea[i] != (i < code.Length ? code[i] : (byte)0xFF))
-                        return false;
-                return true;
-            }
+        private static bool FreeAreaMatches(byte[] freeArea, byte[] code)
+        {
+            for (int i = 0; i < freeArea.Length; i++)
+                if (freeArea[i] != (i < code.Length ? code[i] : (byte)0xFF))
+                    return false;
+            return true;
+        }
 
-            if (MatchesFrom(new byte[0]))
-                return CarState.NotInstalled;
+        private static bool FreeAreaIsEmpty(byte[] freeArea)
+        {
+            CheckFreeArea(freeArea);
+            return FreeAreaMatches(freeArea, new byte[0]);
+        }
 
-            foreach (StartupIndication version in KnownVersions)
+        private static Version? VersionOnCar(byte[] freeArea)
+        {
+            CheckFreeArea(freeArea);
+            foreach (Version version in KnownVersions)
             {
                 byte[] code = BuildCode(version, out _, out _, out _);
-                if (code.Length <= CarCheckLength && MatchesFrom(code))
-                    return version == Current ? CarState.Current : CarState.Earlier;
+                if (code.Length <= CarCheckLength && FreeAreaMatches(freeArea, code))
+                    return version;
             }
-            return CarState.Unrecognised;
+            return null;
         }
 
         /// <summary>
@@ -324,15 +458,19 @@ namespace BmwebFlasher
         public static string DataVersionFrom(byte[] field)
             => field != null && field.Length == DataVersionLength ? ReadAscii(field, 0, DataVersionLength) : null;
 
-        /// <summary>True when the MPC carries exactly the code this class writes today.</summary>
-        public static bool IsCurrentVersion(byte[] mpc) => CarriesVersion(mpc, Current);
+        /// <summary>True when the MPC carries exactly the code this class writes today, for either trigger.</summary>
+        public static bool IsCurrentVersion(byte[] mpc)
+        {
+            Version? version = VersionOf(mpc);
+            return version != null && IsCurrent(version.Value);
+        }
 
-        private static bool CarriesVersion(byte[] mpc, StartupIndication startupIndication)
+        private static bool CarriesVersion(byte[] mpc, Version version)
         {
             if (mpc == null || mpc.Length != MpcLength)
                 return false;
 
-            byte[] code = BuildCode(startupIndication, out uint[] lookupStubs, out uint tachStub, out uint[] nvStubs);
+            byte[] code = BuildCode(version, out uint[] lookupStubs, out uint tachStub, out uint[] nvStubs);
             for (int i = 0; i < code.Length; i++)
                 if (mpc[MpcFreeStart + i] != code[i])
                     return false;
@@ -447,15 +585,26 @@ namespace BmwebFlasher
         /// stores a copy of map 1. The caller's arrays are left alone.
         /// </summary>
         public static Result Build(byte[] flash, byte[] mpc, byte[] map1, byte[] map2)
-            => Build(flash, mpc, map1, map2, Current);
+            => Build(flash, mpc, map1, map2, DefaultTrigger);
 
         /// <summary>
         /// As <see cref="Build(byte[], byte[], byte[], byte[])"/>, choosing the
-        /// version. The earlier one is only built by the tests, to prove an
-        /// image carrying it is recognised and updated.
+        /// trigger. A pair that carries the other trigger has its code replaced.
+        /// </summary>
+        public static Result Build(byte[] flash, byte[] mpc, byte[] map1, byte[] map2, Trigger trigger)
+            => Build(flash, mpc, map1, map2, CurrentVersion(trigger));
+
+        /// <summary>
+        /// As <see cref="Build(byte[], byte[], byte[], byte[])"/>, choosing one
+        /// of the earlier pedal-triggered versions by its start-up indication.
+        /// Only the tests build these, to prove an image carrying one is
+        /// recognised and updated.
         /// </summary>
         internal static Result Build(byte[] flash, byte[] mpc, byte[] map1, byte[] map2,
             StartupIndication startupIndication)
+            => Build(flash, mpc, map1, map2, new Version(Trigger.Pedals, startupIndication));
+
+        internal static Result Build(byte[] flash, byte[] mpc, byte[] map1, byte[] map2, Version version)
         {
             string blocked = BlockedReason(flash, mpc);
             if (blocked != null)
@@ -509,12 +658,13 @@ namespace BmwebFlasher
                 if (current1[i] != second[i])
                     result.MapsIdentical = false;
 
-            byte[] code = BuildCode(startupIndication, out uint[] lookupStubs, out uint tachStub, out uint[] nvStubs);
+            byte[] code = BuildCode(version, out uint[] lookupStubs, out uint tachStub, out uint[] nvStubs);
             result.CodeBytes = code.Length;
 
-            if (CarriesVersion(mpc, startupIndication))
+            if (CarriesVersion(mpc, version))
             {
-                result.Log.Add("Code: image already carries this version of the map switch, left unchanged");
+                result.Log.Add("Code: image already carries this version of the map switch (" +
+                               Describe(version.Trigger) + "), left unchanged");
                 CorrectRomTestSum(result);
                 return result;
             }
@@ -524,10 +674,13 @@ namespace BmwebFlasher
             // patch site is written again below.
             if (result.WasAlreadyPatched)
             {
+                Version was = VersionOf(mpc).Value;
                 for (int i = MpcFreeStart; i < MpcFreeEnd; i++)
                     result.Mpc[i] = 0xFF;
                 result.WasUpdated = true;
-                result.Log.Add("Code: replaced the earlier version of the map switch");
+                result.Log.Add(was.Trigger == version.Trigger
+                    ? "Code: replaced the earlier version of the map switch"
+                    : "Code: replaced the map switch, trigger was " + Describe(was.Trigger));
             }
 
             Buffer.BlockCopy(code, 0, result.Mpc, MpcFreeStart, code.Length);
@@ -539,7 +692,7 @@ namespace BmwebFlasher
 
             result.Log.Add("Code: " + LookupEntries.Length + " lookup hooks, gesture/tach routine and " +
                            "stored-data routines, " + code.Length + " bytes at MPC 0x" +
-                           MpcFreeStart.ToString("X"));
+                           MpcFreeStart.ToString("X") + ", trigger: " + Describe(version.Trigger));
             CorrectRomTestSum(result);
             return result;
         }
@@ -600,7 +753,7 @@ namespace BmwebFlasher
         /// Assembles everything that goes into the MPC free area, in order, and
         /// reports where each piece landed.
         /// </summary>
-        private static byte[] BuildCode(StartupIndication startupIndication,
+        private static byte[] BuildCode(Version version,
             out uint[] lookupStubs, out uint tachStub, out uint[] nvStubs)
         {
             var all = new List<uint>();
@@ -614,13 +767,13 @@ namespace BmwebFlasher
             }
 
             tachStub = Here();
-            all.AddRange(TachStub(Here(), startupIndication).Words());
+            all.AddRange(TachStub(Here(), version).Words());
 
             nvStubs = new uint[3];
             nvStubs[0] = Here();
-            all.AddRange(NvInit(Here(), startupIndication).Words());
+            all.AddRange(NvInit(Here(), version).Words());
             nvStubs[1] = Here();
-            all.AddRange(NvRestore(Here(), startupIndication).Words());
+            all.AddRange(NvRestore(Here(), version).Words());
             nvStubs[2] = Here();
             all.AddRange(NvSave(Here()).Words());
 
@@ -651,15 +804,16 @@ namespace BmwebFlasher
             return a;
         }
 
-        private static Asm TachStub(uint at, StartupIndication startupIndication)
+        private static Asm TachStub(uint at, Version version)
         {
             int flag = Off(RamFlag), count = Off(RamHoldCounter);
             int delay = Off(RamStartupDelay);
-            bool delayed = startupIndication == StartupIndication.Delayed;
+            bool delayed = version.Startup == StartupIndication.Delayed;
+            bool dsc = version.Trigger == Trigger.DscButton;
 
             // The display counter is a byte, or 16 bits where the
             // indication at ignition-on is too long for one.
-            bool wide = startupIndication == StartupIndication.ImmediateLong;
+            bool wide = version.Startup == StartupIndication.ImmediateLong;
             int disp = Off(wide ? RamWideDisplayCounter : RamDisplayCounter);
             Func<int, int, int, uint> loadDisp = wide ? Lhz : Lbz;
             Func<int, int, int, uint> storeDisp = wide ? Sth : Stb;
@@ -681,7 +835,76 @@ namespace BmwebFlasher
                 a.Label("gesture");
             }
 
-            // Gesture: both brake inputs set and the pedal floored.
+            if (dsc)
+                EmitDscGesture(a, flag, count, disp, storeDisp, version.Watch);
+            else
+                EmitPedalGesture(a, flag, count, disp, storeDisp);
+
+            a.Label("show");
+            a.Emit(loadDisp(12, disp, 13)); a.Emit(Cmpwi(12, 0)); a.Bc(Beq, "store");
+            a.Emit(Addi(12, 12, -1)); a.Emit(storeDisp(12, disp, 13));
+            a.Emit(Lbz(11, flag, 13)); a.Emit(AndiDot(11, 11, 1));
+            a.Emit(Li(3, Tach1000)); a.Bc(Beq, "store");
+            a.Emit(Li(3, Tach2000));
+            a.B("store");
+
+            a.Label("running");
+            a.Emit(Li(12, 0)); a.Emit(Sth(12, count, 13)); a.Emit(storeDisp(12, disp, 13));
+            if (dsc)
+                a.Emit(Stb(12, Off(RamPressCounter), 13));
+            // An engine that is turning has made the indication pointless;
+            // it is not shown late, after a stall or a stop.
+            if (delayed)
+                a.Emit(Sth(12, delay, 13));
+
+            a.Label("store");
+            a.Emit(Sth(3, TachVar, 13));
+            a.Emit(Blr);
+            return a;
+        }
+
+        /// <summary>
+        /// The DSC button. Its state comes from the DSC module over CAN, one
+        /// frame or two after the press, so this counts changes of the state
+        /// rather than presses: each press changes it once, and four presses
+        /// leave DSC as it was. The count is dropped when the next change
+        /// does not come within the window.
+        /// </summary>
+        private static void EmitDscGesture(Asm a, int flag, int count, int disp, Func<int, int, int, uint> storeDisp,
+            DscWatch watch)
+        {
+            int presses = Off(RamPressCounter);
+            int state = watch == DscWatch.Car ? VarDscState : FirstVarDscState;
+            int mask = watch == DscWatch.Car ? DscStateMask : FirstDscStateMask;
+
+            a.Emit(Lbz(12, state, 13)); a.Emit(AndiDot(12, 12, mask));
+            a.Emit(Lbz(11, flag, 13)); a.Emit(AndiDot(10, 11, mask));
+            a.Emit(Cmpw(12, 10)); a.Bc(Beq, "steady");
+
+            // The state changed: keep it in the flag (same bit position, clear
+            // of bit 0, the map) and count it.
+            a.Emit(AndiDot(11, 11, 0xFFFF & ~mask)); a.Emit(Or(11, 11, 12)); a.Emit(Stb(11, flag, 13));
+            a.Emit(Lbz(12, presses, 13)); a.Emit(Addi(12, 12, 1)); a.Emit(Stb(12, presses, 13));
+            a.Emit(Li(10, DscPressWindowCalls)); a.Emit(Sth(10, count, 13));
+            a.Emit(Cmplwi(12, DscPresses)); a.Bc(Blt, "show");
+
+            a.Emit(Xori(11, 11, 1)); a.Emit(Stb(11, flag, 13));
+            a.Emit(Li(12, 0)); a.Emit(Sth(12, count, 13)); a.Emit(Stb(12, presses, 13));
+            a.Emit(Li(12, 1)); a.Emit(Stb(12, NvSaveRequest, 13));
+            a.Emit(Li(12, DisplayCalls)); a.Emit(storeDisp(12, disp, 13));
+            a.B("show");
+
+            // No change: let the window run out, and forget the presses when it does.
+            a.Label("steady");
+            a.Emit(Lhz(12, count, 13)); a.Emit(Cmpwi(12, 0)); a.Bc(Beq, "show");
+            a.Emit(Addi(12, 12, -1)); a.Emit(Sth(12, count, 13));
+            a.Emit(Cmpwi(12, 0)); a.Bc(Bne, "show");
+            a.Emit(Stb(12, presses, 13));
+        }
+
+        /// <summary>The earlier gesture: both brake inputs set and the pedal floored, held.</summary>
+        private static void EmitPedalGesture(Asm a, int flag, int count, int disp, Func<int, int, int, uint> storeDisp)
+        {
             a.Emit(Lbz(12, VarBrakeA, 13)); a.Emit(Cmpwi(12, 0)); a.Bc(Beq, "idle");
             a.Emit(Lbz(12, VarBrakeB, 13)); a.Emit(Cmpwi(12, 0)); a.Bc(Beq, "idle");
             a.Emit(Lbz(12, VarPedal, 13)); a.Emit(Cmplwi(12, PedalFull)); a.Bc(Blt, "idle");
@@ -701,26 +924,6 @@ namespace BmwebFlasher
             a.Emit(Li(12, 0)); a.Emit(Sth(12, count, 13));
             a.Emit(Lbz(12, VarPedal, 13)); a.Emit(Cmplwi(12, PedalReleased)); a.Bc(Bge, "show");
             a.Emit(Lbz(11, flag, 13)); a.Emit(AndiDot(11, 11, 1)); a.Emit(Stb(11, flag, 13)); // re-arm
-
-            a.Label("show");
-            a.Emit(loadDisp(12, disp, 13)); a.Emit(Cmpwi(12, 0)); a.Bc(Beq, "store");
-            a.Emit(Addi(12, 12, -1)); a.Emit(storeDisp(12, disp, 13));
-            a.Emit(Lbz(11, flag, 13)); a.Emit(AndiDot(11, 11, 1));
-            a.Emit(Li(3, Tach1000)); a.Bc(Beq, "store");
-            a.Emit(Li(3, Tach2000));
-            a.B("store");
-
-            a.Label("running");
-            a.Emit(Li(12, 0)); a.Emit(Sth(12, count, 13)); a.Emit(storeDisp(12, disp, 13));
-            // An engine that is turning has made the indication pointless;
-            // it is not shown late, after a stall or a stop.
-            if (delayed)
-                a.Emit(Sth(12, delay, 13));
-
-            a.Label("store");
-            a.Emit(Sth(3, TachVar, 13));
-            a.Emit(Blr);
-            return a;
         }
 
         // Power-up. The display countdown is what makes the tach show the
@@ -750,26 +953,30 @@ namespace BmwebFlasher
             }
         }
 
-        private static Asm NvInit(uint at, StartupIndication startupIndication)
+        private static Asm NvInit(uint at, Version version)
         {
             var a = new Asm(at);
             a.Emit(Li(12, 0));
             a.Emit(Stb(12, NvVar, 13));
             a.Emit(Stb(12, Off(RamFlag), 13));
             a.Emit(Sth(12, Off(RamHoldCounter), 13));
-            EmitStartup(a, 12, startupIndication);
+            if (version.Trigger == Trigger.DscButton)
+                a.Emit(Stb(12, Off(RamPressCounter), 13));
+            EmitStartup(a, 12, version.Startup);
             a.Emit(Blr);
             return a;
         }
 
-        private static Asm NvRestore(uint at, StartupIndication startupIndication)
+        private static Asm NvRestore(uint at, Version version)
         {
             var a = new Asm(at);
             a.Emit(Lbz(12, 0, 3));
             a.Emit(Srwi(11, 12, 7)); a.Emit(Stb(11, Off(RamFlag), 13));
             a.Emit(AndiDot(12, 12, 0x7F)); a.Emit(Stb(12, NvVar, 13));
             a.Emit(Li(11, 0)); a.Emit(Sth(11, Off(RamHoldCounter), 13));
-            EmitStartup(a, 11, startupIndication);
+            if (version.Trigger == Trigger.DscButton)
+                a.Emit(Stb(11, Off(RamPressCounter), 13));
+            EmitStartup(a, 11, version.Startup);
             a.Emit(Blr);
             return a;
         }
@@ -816,6 +1023,7 @@ namespace BmwebFlasher
         internal static uint Addis(int rt, int ra, int v) => D(15, rt, ra, S16(v));
         internal static uint Cmpwi(int ra, int v) => D(11, 0, ra, S16(v));
         internal static uint Cmplwi(int ra, int v) => D(10, 0, ra, U16(v));
+        internal static uint Cmpw(int ra, int rb) => (31u << 26) | ((uint)ra << 16) | ((uint)rb << 11);
         internal static uint AndiDot(int ra, int rs, int v) => D(28, rs, ra, U16(v));
         internal static uint Ori(int ra, int rs, int v) => D(24, rs, ra, U16(v));
         internal static uint Xori(int ra, int rs, int v) => D(26, rs, ra, U16(v));

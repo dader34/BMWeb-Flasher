@@ -64,8 +64,7 @@
                 <Button x:Name="ReadTune"     Content="Read DME"               HorizontalAlignment="Stretch" Click="ReadTune_Click"     IsEnabled="False"/>
                 <!-- Only for a car that identified as carrying the map switch. -->
                 <Button x:Name="ReadInstalledMaps" Content="Read Installed Maps" HorizontalAlignment="Stretch" Click="ReadInstalledMaps_Click" IsVisible="False"
-                        ToolTip.Tip="Reads map 1 and map 2 from the car and saves each as a tune file."/>
-                <Button x:Name="LoadFile"     Content="Load File / .0da"              HorizontalAlignment="Stretch" Click="LoadFile_Click"     IsEnabled="False"/>
+                        ToolTip.Tip="Reads map 1 and map 2 from the car and saves each as a tune file."/>                <Button x:Name="LoadFile"     Content="Load File / .0da"              HorizontalAlignment="Stretch" Click="LoadFile_Click"     IsEnabled="False"/>
                 <TextBlock x:Name="LoadFileName_Box" IsVisible="False" FontSize="11" Opacity="0.7"
                            TextTrimming="CharacterEllipsis" Margin="2,-2,0,2"/>
                 <!-- Shown when a BMW .0PA / .0DA was loaded in place of a raw
@@ -186,7 +185,17 @@
 
             <TextBlock Text="Map Switch" FontWeight="SemiBold"/>
               <TextBlock TextWrapping="Wrap" Opacity="0.8"
-                         Text="Experimental. Builds an MS45.1 program (0044570LO02S) that holds two tunes. With the engine stopped, hold the brake and full throttle for 5 seconds to switch; the tach then shows 1000 rpm for map 1 or 2000 rpm for map 2. It also shows the active map once, about 6 seconds after ignition-on."/>
+                         Text="Experimental. Builds an MS45.1 program (0044570LO02S) that holds two tunes. With the ignition on and the engine stopped, the trigger below switches maps; the tach then shows 1000 rpm for map 1 or 2000 rpm for map 2. It also shows the active map for 3 seconds at ignition-on."/>
+
+              <StackPanel Orientation="Horizontal" Spacing="12">
+                <TextBlock Text="Trigger:" VerticalAlignment="Center"/>
+                <RadioButton x:Name="MapSwitchTriggerDsc" GroupName="MapSwitchTrigger" IsChecked="True"
+                             Content="DSC button, 4 presses" Click="MapSwitchTrigger_Click"
+                             ToolTip.Tip="Four short presses of the DSC button (the DTC on/off ones, not the long hold) within about 2 seconds of each other. DTC ends up as it started."/>
+                <RadioButton x:Name="MapSwitchTriggerPedals" GroupName="MapSwitchTrigger"
+                             Content="Brake + full throttle, 5 s" Click="MapSwitchTrigger_Click"
+                             ToolTip.Tip="Hold the brake and floor the throttle for 5 seconds."/>
+              </StackPanel>
 
               <Grid ColumnDefinitions="200,*" RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="6" ColumnSpacing="8">
                 <Button x:Name="MapSwitchLoadFlash" Grid.Row="0" Grid.Column="0" Content="External Flash / .0pa..."
