@@ -33,7 +33,8 @@ namespace BmwebFlasher
     ///   - The routine that builds CAN frame 0x316 (engine speed for the cluster)
     ///     is hooked where it stores the rpm. With the engine stopped and the car
     ///     stationary, the chosen <see cref="Trigger"/> toggles the map: the DSC
-    ///     button pressed four times, or brake + full throttle held for 5 s. The
+    ///     button pressed two or four times, or brake + full throttle held for
+    ///     5 s. The
     ///     tach then shows 1000 rpm for map 1 or 2000 rpm for map 2. It is also
     ///     shown once at ignition-on, for twice as long. Images carrying another
     ///     version, or the other trigger, are recognised and brought up to date
@@ -207,8 +208,13 @@ namespace BmwebFlasher
         private const int HoldCalls = 5 * CallsPerSecond;
         private const int DisplayCalls = 150;
 
-        /// <summary>How many DSC presses toggle the map, and how close together they must be.</summary>
-        public const int DscPresses = 4;
+        /// <summary>
+        /// How many DSC presses toggle the map (the caller chooses from
+        /// <see cref="DscPressChoices"/>), and how close together they must be.
+        /// An even count leaves DTC as it started.
+        /// </summary>
+        public const int DefaultDscPresses = 4;
+        public static readonly int[] DscPressChoices = { 2, 4 };
         public const int DscPressWindowSeconds = 2;
         private const int DscPressWindowCalls = DscPressWindowSeconds * CallsPerSecond;
 
@@ -247,8 +253,10 @@ namespace BmwebFlasher
 
         public const Trigger DefaultTrigger = Trigger.DscButton;
 
-        public static string Describe(Trigger trigger)
-            => trigger == Trigger.DscButton ? "DSC button pressed 4 times" : "brake + full throttle held 5 s";
+        public static string Describe(Trigger trigger, int dscPresses = DefaultDscPresses)
+            => trigger == Trigger.DscButton
+                ? "DSC button pressed " + dscPresses + " times"
+                : "brake + full throttle held 5 s";
 
         /// <summary>
         /// How much of the tune switches.
@@ -272,35 +280,43 @@ namespace BmwebFlasher
         {
             public readonly Trigger Trigger;
             public readonly StartupIndication Startup;
-            /// <summary>Only meaningful for the DSC trigger.</summary>
+            /// <summary>Only meaningful for the DSC trigger, as is <see cref="Presses"/>.</summary>
             public readonly DscWatch Watch;
             public readonly Scope Scope;
+            /// <summary>How many DSC presses toggle the map; 0 for the pedals.</summary>
+            public readonly int Presses;
 
             public Version(Trigger trigger, StartupIndication startup, DscWatch watch = DscWatch.Car,
-                Scope scope = Scope.MapsOnly)
+                Scope scope = Scope.MapsOnly, int presses = DefaultDscPresses)
             {
                 Trigger = trigger;
                 Startup = startup;
                 Watch = trigger == Trigger.DscButton ? watch : DscWatch.Car;
                 Scope = scope;
+                Presses = trigger == Trigger.DscButton ? presses : 0;
             }
 
             public static bool operator ==(Version a, Version b)
-                => a.Trigger == b.Trigger && a.Startup == b.Startup && a.Watch == b.Watch && a.Scope == b.Scope;
+                => a.Trigger == b.Trigger && a.Startup == b.Startup && a.Watch == b.Watch && a.Scope == b.Scope &&
+                   a.Presses == b.Presses;
             public static bool operator !=(Version a, Version b) => !(a == b);
             public override bool Equals(object obj) => obj is Version v && this == v;
-            public override int GetHashCode() => (((int)Trigger * 16 + (int)Startup) * 4 + (int)Watch) * 2 + (int)Scope;
+            public override int GetHashCode()
+                => ((((int)Trigger * 16 + (int)Startup) * 4 + (int)Watch) * 2 + (int)Scope) * 8 + Presses;
         }
 
         /// <summary>The version built today for a trigger: full tune, 3 s indication at ignition-on.</summary>
-        private static Version CurrentVersion(Trigger trigger)
-            => new Version(trigger, StartupIndication.ImmediateLong, DscWatch.Car, Scope.FullTune);
+        private static Version CurrentVersion(Trigger trigger, int dscPresses = DefaultDscPresses)
+            => new Version(trigger, StartupIndication.ImmediateLong, DscWatch.Car, Scope.FullTune, dscPresses);
 
-        private static bool IsCurrent(Version version) => version == CurrentVersion(version.Trigger);
+        private static bool IsCurrent(Version version)
+            => version == CurrentVersion(version.Trigger, version.Presses) &&
+               (version.Trigger != Trigger.DscButton || Array.IndexOf(DscPressChoices, version.Presses) >= 0);
 
         private static readonly Version[] KnownVersions =
         {
-            CurrentVersion(Trigger.DscButton),
+            CurrentVersion(Trigger.DscButton, 4),
+            CurrentVersion(Trigger.DscButton, 2),
             CurrentVersion(Trigger.Pedals),
             new Version(Trigger.DscButton, StartupIndication.ImmediateLong, DscWatch.Car, Scope.MapsOnly),
             new Version(Trigger.Pedals, StartupIndication.ImmediateLong, DscWatch.Car, Scope.MapsOnly),
@@ -398,6 +414,9 @@ namespace BmwebFlasher
         /// <summary>The trigger a patched MPC switches on; null when it is not patched.</summary>
         public static Trigger? InstalledTrigger(byte[] mpc) => VersionOf(mpc)?.Trigger;
 
+        /// <summary>How many DSC presses a patched MPC switches on; 0 for the pedals, null when it is not patched.</summary>
+        public static int? InstalledDscPresses(byte[] mpc) => VersionOf(mpc)?.Presses;
+
         /// <summary>How much of the tune a patched MPC switches; null when it is not patched.</summary>
         public static Scope? InstalledScope(byte[] mpc) => VersionOf(mpc)?.Scope;
 
@@ -449,6 +468,9 @@ namespace BmwebFlasher
 
         /// <summary>The trigger the car's map switch uses, from the same bytes; null when it carries none.</summary>
         public static Trigger? TriggerOnCar(byte[] freeArea) => VersionOnCar(freeArea)?.Trigger;
+
+        /// <summary>How many DSC presses the car's map switch needs; 0 for the pedals, null when it carries none.</summary>
+        public static int? DscPressesOnCar(byte[] freeArea) => VersionOnCar(freeArea)?.Presses;
 
         /// <summary>How much of the tune the car's map switch switches; null when it carries none.</summary>
         public static Scope? ScopeOnCar(byte[] freeArea) => VersionOnCar(freeArea)?.Scope;
@@ -646,11 +668,17 @@ namespace BmwebFlasher
 
         /// <summary>
         /// As <see cref="Build(byte[], byte[], byte[], byte[])"/>, choosing the
-        /// trigger. A pair that carries the other trigger, or an earlier
-        /// version, has its code replaced.
+        /// trigger and, for the DSC button, the number of presses. A pair
+        /// that carries other choices, or an earlier version, has its code
+        /// replaced.
         /// </summary>
-        public static Result Build(byte[] flash, byte[] mpc, byte[] map1, byte[] map2, Trigger trigger)
-            => Build(flash, mpc, map1, map2, CurrentVersion(trigger));
+        public static Result Build(byte[] flash, byte[] mpc, byte[] map1, byte[] map2, Trigger trigger,
+            int dscPresses = DefaultDscPresses)
+        {
+            if (trigger == Trigger.DscButton && Array.IndexOf(DscPressChoices, dscPresses) < 0)
+                throw new ArgumentException("The DSC button trigger takes 2 or 4 presses.", nameof(dscPresses));
+            return Build(flash, mpc, map1, map2, CurrentVersion(trigger, dscPresses));
+        }
 
         /// <summary>
         /// As <see cref="Build(byte[], byte[], byte[], byte[])"/>, choosing one
@@ -723,7 +751,8 @@ namespace BmwebFlasher
             if (CarriesVersion(mpc, version))
             {
                 result.Log.Add("Code: image already carries this version of the map switch (" +
-                               Describe(version.Trigger) + ", " + Describe(version.Scope) + "), left unchanged");
+                               Describe(version.Trigger, version.Presses) + ", " + Describe(version.Scope) +
+                               "), left unchanged");
                 CorrectRomTestSum(result);
                 return result;
             }
@@ -737,9 +766,9 @@ namespace BmwebFlasher
                 for (int i = MpcFreeStart; i < MpcFreeEnd; i++)
                     result.Mpc[i] = 0xFF;
                 result.WasUpdated = true;
-                result.Log.Add(was.Trigger == version.Trigger && was.Scope == version.Scope
+                result.Log.Add(was.Trigger == version.Trigger && was.Scope == version.Scope && was.Presses == version.Presses
                     ? "Code: replaced the earlier version of the map switch"
-                    : "Code: replaced the map switch, was " + Describe(was.Trigger) + ", " + Describe(was.Scope));
+                    : "Code: replaced the map switch, was " + Describe(was.Trigger, was.Presses) + ", " + Describe(was.Scope));
             }
 
             Buffer.BlockCopy(code, 0, result.Mpc, MpcFreeStart, code.Length);
@@ -751,7 +780,7 @@ namespace BmwebFlasher
 
             result.Log.Add("Code: " + LookupEntries.Length + " lookup hooks, gesture/tach routine and " +
                            "stored-data routines, " + code.Length + " bytes at MPC 0x" +
-                           MpcFreeStart.ToString("X") + ", trigger: " + Describe(version.Trigger) +
+                           MpcFreeStart.ToString("X") + ", trigger: " + Describe(version.Trigger, version.Presses) +
                            ", switches " + Describe(version.Scope));
             CorrectRomTestSum(result);
             return result;
@@ -952,7 +981,7 @@ namespace BmwebFlasher
             }
 
             if (dsc)
-                EmitDscGesture(a, flag, count, disp, storeDisp, version.Watch, version.Scope);
+                EmitDscGesture(a, flag, count, disp, storeDisp, version.Watch, version.Scope, version.Presses);
             else
                 EmitPedalGesture(a, flag, count, disp, storeDisp, version.Scope);
 
@@ -1003,7 +1032,7 @@ namespace BmwebFlasher
         }
 
         private static void EmitDscGesture(Asm a, int flag, int count, int disp, Func<int, int, int, uint> storeDisp,
-            DscWatch watch, Scope scope)
+            DscWatch watch, Scope scope, int pressesToToggle)
         {
             int presses = Off(RamPressCounter);
             int state = watch == DscWatch.Car ? VarDscState : FirstVarDscState;
@@ -1018,7 +1047,7 @@ namespace BmwebFlasher
             a.Emit(AndiDot(11, 11, 0xFFFF & ~mask)); a.Emit(Or(11, 11, 12)); a.Emit(Stb(11, flag, 13));
             a.Emit(Lbz(12, presses, 13)); a.Emit(Addi(12, 12, 1)); a.Emit(Stb(12, presses, 13));
             a.Emit(Li(10, DscPressWindowCalls)); a.Emit(Sth(10, count, 13));
-            a.Emit(Cmplwi(12, DscPresses)); a.Bc(Blt, "show");
+            a.Emit(Cmplwi(12, pressesToToggle)); a.Bc(Blt, "show");
 
             a.Emit(Xori(11, 11, 1)); a.Emit(Stb(11, flag, 13));
             EmitBaseRegister(a, 11, scope, "base");

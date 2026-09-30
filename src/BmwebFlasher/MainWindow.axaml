@@ -190,8 +190,13 @@
               <StackPanel Orientation="Horizontal" Spacing="12">
                 <TextBlock Text="Trigger:" VerticalAlignment="Center"/>
                 <RadioButton x:Name="MapSwitchTriggerDsc" GroupName="MapSwitchTrigger" IsChecked="True"
-                             Content="DSC button, 4 presses" Click="MapSwitchTrigger_Click"
-                             ToolTip.Tip="Four short presses of the DSC button (the DTC on/off ones, not the long hold) within about 2 seconds of each other. DTC ends up as it started."/>
+                             Content="DSC button" Click="MapSwitchTrigger_Click"
+                             ToolTip.Tip="Short presses of the DSC button (the DTC on/off ones, not the long hold) within about 2 seconds of each other. DTC ends up as it started."/>
+                <RadioButton x:Name="MapSwitchPresses4" GroupName="MapSwitchPresses" IsChecked="True"
+                             Content="4 presses" Click="MapSwitchTrigger_Click"/>
+                <RadioButton x:Name="MapSwitchPresses2" GroupName="MapSwitchPresses"
+                             Content="2 presses" Click="MapSwitchTrigger_Click"
+                             ToolTip.Tip="Quicker, but two quick presses with the engine stopped is easier to do by accident."/>
                 <RadioButton x:Name="MapSwitchTriggerPedals" GroupName="MapSwitchTrigger"
                              Content="Brake + full throttle, 5 s" Click="MapSwitchTrigger_Click"
                              ToolTip.Tip="Hold the brake and floor the throttle for 5 seconds."/>

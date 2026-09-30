@@ -530,10 +530,39 @@ namespace BmwebFlasher.Tests
             Assert.DoesNotContain(MapSwitch.Lbz(12, -0x4061, 13), tach);
 
             // The window between presses is 2 s at 100 calls a second.
-            Assert.Equal(4, MapSwitch.DscPresses);
+            Assert.Equal(4, MapSwitch.DefaultDscPresses);
             Assert.Equal(2, MapSwitch.DscPressWindowSeconds);
             Assert.Contains(MapSwitch.Li(10, 200), tach);
             Assert.DoesNotContain(MapSwitch.Cmplwi(12, 500), tach);
+        }
+
+        [Fact]
+        public void TheDscTriggerCanTakeTwoPresses()
+        {
+            var (flash, mpc) = SyntheticPair();
+            MapSwitch.Result four = MapSwitch.Build(flash, mpc, null, null, MapSwitch.Trigger.DscButton, 4);
+            MapSwitch.Result two = MapSwitch.Build(flash, mpc, null, null, MapSwitch.Trigger.DscButton, 2);
+
+            Assert.Equal(four.Mpc, MapSwitch.Build(flash, mpc, null, null).Mpc);
+            Assert.NotEqual(four.Mpc, two.Mpc);
+            Assert.Contains(MapSwitch.Cmplwi(12, 2), TachRoutine(two.Mpc));
+            Assert.DoesNotContain(MapSwitch.Cmplwi(12, 4), TachRoutine(two.Mpc));
+
+            foreach (var r in new[] { four, two })
+            {
+                Assert.True(MapSwitch.IsCurrentVersion(r.Mpc));
+                Assert.Equal(MapSwitch.Trigger.DscButton, MapSwitch.InstalledTrigger(r.Mpc));
+            }
+            Assert.Equal(4, MapSwitch.InstalledDscPresses(four.Mpc));
+            Assert.Equal(2, MapSwitch.InstalledDscPresses(two.Mpc));
+            Assert.Equal(0, MapSwitch.InstalledDscPresses(MapSwitch.Build(flash, mpc, null, null, MapSwitch.Trigger.Pedals).Mpc));
+            Assert.Null(MapSwitch.InstalledDscPresses(mpc));
+
+            // Changing the count replaces the code; other counts are refused.
+            MapSwitch.Result changed = MapSwitch.Build(four.Flash, four.Mpc, null, null, MapSwitch.Trigger.DscButton, 2);
+            Assert.True(changed.WasUpdated);
+            Assert.Equal(two.Mpc, changed.Mpc);
+            Assert.Throws<ArgumentException>(() => MapSwitch.Build(flash, mpc, null, null, MapSwitch.Trigger.DscButton, 3));
         }
 
         [Fact]
