@@ -54,7 +54,15 @@ namespace BmwebFlasher.Tests
             for (int i = 0x200; i < 0x15000; i++)
                 cal[i] = fill;
             Encoding.ASCII.GetBytes("0044570LO00S").CopyTo(cal, 0x10);
+            PutCalTestSum(cal, MapSwitch.CalTestSum(cal));
             return cal;
+        }
+
+        // The safety monitor's calibration sum, stored at cal 0x57DC.
+        private static void PutCalTestSum(byte[] cal, ulong sum)
+        {
+            Put32(cal, 0x57DC, (uint)(sum >> 32));
+            Put32(cal, 0x57E0, (uint)sum);
         }
 
         private static (byte[] Flash, byte[] Mpc) SyntheticPair()
@@ -79,7 +87,8 @@ namespace BmwebFlasher.Tests
             Put32(mpc, NvDescriptor + 4, 0xFFFCA104);
             Put32(mpc, NvDescriptor + 8, 0xFFFCA110);
 
-            // The safety monitor's ranges, and the sum they give.
+            // The safety monitor's ranges (code, then calibration), and the
+            // code sum they give.
             for (int i = 0; i < RomTestRanges.Length; i++)
                 Put32(flash, 0x60608 + 4 * i, RomTestRanges[i]);
             PutRomTestSum(flash, MapSwitch.RomTestSum(flash, mpc));
@@ -89,6 +98,7 @@ namespace BmwebFlasher.Tests
         private static readonly uint[] RomTestRanges =
         {
             0x0000BAE8, 0x0000F5F8, 0xFFF60630, 0xFFF68C2C, 0x00000140, 0x000002D4,
+            0xFFE40240, 0xFFE407C8,
         };
 
         private static void PutRomTestSum(byte[] flash, ulong sum)
@@ -217,6 +227,36 @@ namespace BmwebFlasher.Tests
             // and the stored value must be the one the patched code gives.
             Assert.NotEqual(MapSwitch.ReadRomTestSum(flash), MapSwitch.ReadRomTestSum(r.Flash));
             Assert.Equal(MapSwitch.RomTestSum(r.Flash, r.Mpc), MapSwitch.ReadRomTestSum(r.Flash));
+        }
+
+        [Fact]
+        public void Map2CarriesMap1sCalibrationSumAndAStaleMap1SumIsCorrected()
+        {
+            // The monitor sums map 1's calibration but reads the expected
+            // value from the selected map, so map 2 must hold map 1's value.
+            var (flash, mpc) = SyntheticPair();
+            byte[] two = SyntheticCalibration(0x55);        // different bytes in the summed range
+            Assert.NotEqual(MapSwitch.CalTestSum(two), MapSwitch.ReadCalTestSum(flash, MapSwitch.CalibrationStart));
+
+            MapSwitch.Result r = MapSwitch.Build(flash, mpc, null, two);
+            ulong map1Sum = MapSwitch.CalTestSum(SyntheticCalibration(0x22));
+            Assert.Equal(map1Sum, MapSwitch.ReadCalTestSum(r.Flash, MapSwitch.CalibrationStart));
+            Assert.Equal(map1Sum, MapSwitch.ReadCalTestSum(r.Flash, MapSwitch.Map2Start));
+            Assert.Contains(r.Log, l => l.StartsWith("Map 2: given map 1's calibration sum"));
+
+            // Everything else of map 2 is the tune as given.
+            for (int i = 0; i < MapSwitch.Map2Length; i++)
+                if (i < 0x57DC || i >= 0x57E4)
+                    Assert.True(two[i] == r.Flash[MapSwitch.Map2Start + i], "map 2 changed at 0x" + i.ToString("X"));
+
+            // A map 1 whose stored value is stale is put right.
+            var (flash2, mpc2) = SyntheticPair();
+            var offset = MapSwitch.CalibrationStart;
+            Put32(flash2, offset + 0x57DC, 0x11223344); Put32(flash2, offset + 0x57E0, 0x55667788);
+            MapSwitch.Result fixedUp = MapSwitch.Build(flash2, mpc2, null, null);
+            Assert.Equal(map1Sum, MapSwitch.ReadCalTestSum(fixedUp.Flash, MapSwitch.CalibrationStart));
+            Assert.Equal(map1Sum, MapSwitch.ReadCalTestSum(fixedUp.Flash, MapSwitch.Map2Start));
+            Assert.Contains(fixedUp.Log, l => l.StartsWith("Map 1: safety monitor's calibration sum"));
         }
 
         [Fact]
@@ -612,7 +652,11 @@ namespace BmwebFlasher.Tests
 
             var area = new byte[MapSwitch.Map2Length];
             Array.Copy(r.Flash, MapSwitch.Map2Start, area, 0, area.Length);
-            Assert.Equal(tune, MapSwitch.Map2AsCalibration(area));
+
+            // As stored: the tune, with map 1's calibration sum at 0x57DC.
+            var expected = (byte[])tune.Clone();
+            PutCalTestSum(expected, MapSwitch.CalTestSum(SyntheticCalibration(0x22)));
+            Assert.Equal(expected, MapSwitch.Map2AsCalibration(area));
 
             // An empty area holds no tune.
             for (int i = 0; i < area.Length; i++) area[i] = 0xFF;

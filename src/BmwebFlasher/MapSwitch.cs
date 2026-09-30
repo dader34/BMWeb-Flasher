@@ -59,6 +59,12 @@ namespace BmwebFlasher
     ///     Builds before this did not, and on the car the monitor reset the
     ///     DME at start-up (faults 28B2 and 2796).
     ///
+    ///   - The monitor sums the calibration the same way, cal 0x240-0x7C8,
+    ///     through absolute addresses (map 1's), but reads the stored value
+    ///     to compare with, cal 0x57DC-0x57E3, relative to r2: from the
+    ///     selected map. So map 2 must carry map 1's value there, whatever its
+    ///     own bytes are, see <see cref="CorrectCalTestSums"/>.
+    ///
     /// Two things are assumed rather than proven, see <see cref="RamFlag"/> and
     /// <see cref="CallsPerSecond"/>.
     ///
@@ -323,6 +329,16 @@ namespace BmwebFlasher
         private const ulong RomTestSeed = 0x0123456789ABCDEFUL;
         private const int CalibrationRangeTag = 0x7FF2;   // address >> 17
 
+        /// <summary>
+        /// The safety monitor's calibration sum: the range it covers (listed
+        /// in the program header right after the code ranges) and where the
+        /// calibration stores the value, as an offset into the calibration.
+        /// </summary>
+        private const int CalTestRangeOffset = RomTestRangesOffset + 4 * 6;
+        private const uint CalibrationBase = 0xFFE40000;   // where the program sees the calibration
+        private const uint CalTestRangeStart = 0xFFE40240, CalTestRangeEnd = 0xFFE407C8;
+        private const int CalTestSumOffset = 0x57DC;
+
         public sealed class Result
         {
             public byte[] Flash;
@@ -474,7 +490,9 @@ namespace BmwebFlasher
         /// Turns the map 2 area, as read from a car, back into the tune it
         /// was stored from. Only tunes that are empty past the area are
         /// ever stored, so filling the rest with 0xFF gives the original,
-        /// checksum and signature included. Returns null when the area
+        /// checksum and signature included - except for the safety monitor's
+        /// sum at 0x57DC, which holds map 1's value, see
+        /// <see cref="CorrectCalTestSums"/>. Returns null when the area
         /// holds no tune.
         /// </summary>
         public static byte[] Map2AsCalibration(byte[] map2Area)
@@ -692,6 +710,7 @@ namespace BmwebFlasher
             result.Log.Add(map2 != null
                 ? "Map 2: stored at 0xE0000"
                 : "Map 2: stored a copy of map 1 at 0xE0000");
+            CorrectCalTestSums(result, current1);
 
             result.MapsIdentical = true;
             for (int i = 0; i < Map2Length && result.MapsIdentical; i++)
@@ -788,6 +807,62 @@ namespace BmwebFlasher
             Write32(result.Flash, RomTestSumOffset + 4, (uint)sum);
             result.Log.Add("Safety monitor: code sum at 0x" + RomTestSumOffset.ToString("X") +
                            " set to " + sum.ToString("X16"));
+        }
+
+        // ------------------------------------------------------------------
+        // The safety monitor's calibration sum
+        // ------------------------------------------------------------------
+
+        /// <summary>
+        /// The sum the safety monitor computes over a calibration: the same
+        /// 64-bit sum of 32-bit words as the code sum, over cal 0x240-0x7C8.
+        /// </summary>
+        internal static ulong CalTestSum(byte[] cal)
+        {
+            ulong sum = RomTestSeed;
+            for (int offset = (int)(CalTestRangeStart - CalibrationBase); offset < (int)(CalTestRangeEnd - CalibrationBase); offset += 4)
+                sum += Read32(cal, offset);
+            return sum;
+        }
+
+        internal static ulong ReadCalTestSum(byte[] image, int calibrationOffset = 0)
+            => ((ulong)Read32(image, calibrationOffset + CalTestSumOffset) << 32) |
+               Read32(image, calibrationOffset + CalTestSumOffset + 4);
+
+        private static void WriteCalTestSum(byte[] image, int calibrationOffset, ulong sum)
+        {
+            Write32(image, calibrationOffset + CalTestSumOffset, (uint)(sum >> 32));
+            Write32(image, calibrationOffset + CalTestSumOffset + 4, (uint)sum);
+        }
+
+        /// <summary>
+        /// The monitor sums map 1's range through absolute addresses and
+        /// reads the value to compare with through r2, i.e. from whichever
+        /// map is selected. Map 1's stored value is put right if it is not
+        /// (a car would already be resetting on such a tune), and map 2 is
+        /// given the same value, whatever its own bytes in that range: with
+        /// the full tune selected the monitor still sums map 1.
+        /// </summary>
+        private static void CorrectCalTestSums(Result result, byte[] map1)
+        {
+            if (Read32(result.Flash, CalTestRangeOffset) != CalTestRangeStart ||
+                Read32(result.Flash, CalTestRangeOffset + 4) != CalTestRangeEnd)
+                throw new InvalidOperationException(
+                    "The program header does not list the expected range for the safety monitor's calibration sum.");
+
+            ulong sum = CalTestSum(map1);
+            if (ReadCalTestSum(map1) != sum)
+            {
+                WriteCalTestSum(result.Flash, CalibrationStart, sum);
+                result.Log.Add("Map 1: safety monitor's calibration sum at 0x" + CalTestSumOffset.ToString("X") +
+                               " set to " + sum.ToString("X16"));
+            }
+            if (ReadCalTestSum(result.Flash, Map2Start) != sum)
+            {
+                WriteCalTestSum(result.Flash, Map2Start, sum);
+                result.Log.Add("Map 2: given map 1's calibration sum, " + sum.ToString("X16") +
+                               ", which the safety monitor reads from the selected map");
+            }
         }
 
         /// <summary>
