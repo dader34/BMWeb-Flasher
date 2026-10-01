@@ -1,5 +1,14 @@
 # BMWeb Flasher
 
+> **Superseded.** Everything this app does -- MS45 tune and program flashing
+> with checksums and signatures, the EWS delete, the map switch, GS20
+> calibration and program writes, the read patch, programming records and the
+> session history -- now lives in the **Flashing/Backups** app inside
+> [BMWeb](https://bmweb.danner.ink/) (Apps → Flashing/Backups), which runs in
+> the browser over the same K+DCAN cable with nothing to install. Version
+> 1.3.0.0 is the final release of this desktop app; it keeps working, but
+> new work happens in [BMWeb](https://github.com/dader34/BMWeb).
+
 A macOS/Linux port of the MS45 DME flasher, built with **.NET 8 + Avalonia**
 instead of the original WPF / .NET Framework. Reads and flashes full and partial
 binaries from the MS45.0 and MS45.1, auto-correcting checksums and signing files

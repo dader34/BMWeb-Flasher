@@ -2,120 +2,152 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:BmwebFlasher"
         x:Class="BmwebFlasher.MainWindow"
-        Width="640" Height="640" MinWidth="620" MinHeight="620"
+        Width="880" Height="720" MinWidth="780" MinHeight="640"
         Icon="/Assets/icon.ico"
         Title="BMWeb Flasher">
-  <!-- The WPF original positioned every control with absolute Margins inside a
-       Grid. That does not survive a different text renderer, so the port uses
-       real layout containers instead. The tabs share the status bar and
-       progress bar at the bottom. -->
-  <Grid Margin="0" RowDefinitions="*,Auto,Auto">
+  <!-- Laid out like MS4X Flasher: a rail of screens down the left, the
+       control unit and Identify across the top, the screen in the middle, a
+       log of what happened below it, and the status line with the progress
+       bar at the bottom. Skinned like BMWeb (Styles/Flasher.axaml). Every
+       control keeps its name: the code-behind addresses them. -->
+  <Grid ColumnDefinitions="54,*" RowDefinitions="Auto,*,Auto">
 
-    <TabControl Grid.Row="0" Margin="12,8,12,0">
+    <!-- ============ rail ============ -->
+    <Border Grid.Column="0" Grid.Row="0" Grid.RowSpan="3" Classes="bar" BorderThickness="0,0,1,0">
+      <Grid RowDefinitions="Auto,*,Auto">
+        <StackPanel Grid.Row="0" Spacing="6" Margin="7,10,7,0">
+          <Image Source="avares://BmwebFlasher/Assets/logo-512.png" Width="26" Height="26" Margin="0,0,0,10"/>
+          <Button x:Name="RailFlashing" Classes="rail current" Content="&#x21AF;" Click="RailFlashing_Click"
+                  ToolTip.Tip="Flashing"/>
+          <Button x:Name="RailFaults" Classes="rail" Content="&#x26A0;&#xFE0E;" Click="RailFaults_Click"
+                  IsEnabled="{Binding #FaultsTab.IsEnabled}" ToolTip.Tip="Fault Codes"/>
+          <Button x:Name="RailLive" Classes="rail" Content="&#x223F;" Click="RailLive_Click"
+                  IsEnabled="{Binding #LiveTab.IsEnabled}" ToolTip.Tip="Live Log"/>
+          <Button x:Name="RailHistory" Classes="rail" Content="&#x27F2;" Click="RailHistory_Click"
+                  ToolTip.Tip="History"/>
+          <Button x:Name="RailSettings" Classes="rail" Content="&#x2699;&#xFE0E;" Click="RailSettings_Click"
+                  ToolTip.Tip="Settings"/>
+        </StackPanel>
+        <TextBlock x:Name="BrandVersion" Grid.Row="2" Classes="mono faint" FontSize="9"
+                   HorizontalAlignment="Center" Margin="0,0,0,10"/>
+      </Grid>
+    </Border>
+
+    <!-- ============ top bar ============ -->
+    <Border Grid.Column="1" Grid.Row="0" Classes="bar" BorderThickness="0,0,0,1" Padding="14,10">
+      <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">
+        <!-- Choose the module first; the DME and TCU controls are shown
+             exclusively so their buttons can never be confused. -->
+        <ComboBox x:Name="FlashModuleSelect" Grid.Column="0" MinWidth="180"
+                  PlaceholderText="Control unit..."
+                  SelectionChanged="FlashModuleSelect_Changed">
+          <ComboBoxItem Content="DME (engine)"/>
+          <ComboBoxItem Content="TCU (transmission)"/>
+        </ComboBox>
+        <Border Grid.Column="1" Classes="ecu">
+          <TextBlock x:Name="EcuName_Box" Classes="mono" FontWeight="Medium" HorizontalAlignment="Center"
+                     VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Text="Select a control unit"/>
+        </Border>
+        <Button x:Name="IdentifyDME" Grid.Column="2" Content="Identify ECU" Classes="primary"
+                MinWidth="120" Click="IdentifyDME_Click" IsEnabled="False"/>
+      </Grid>
+    </Border>
+
+    <!-- ============ screen ============ -->
+    <TabControl x:Name="MainTabs" Grid.Column="1" Grid.Row="1" Classes="rail" Margin="14,12,14,0"
+                SelectionChanged="MainTabs_SelectionChanged">
 
       <!-- ============ Flashing ============ -->
       <TabItem Header="Flashing">
-        <!-- Two views share this tab. Custom Options replaces the flashing
-             controls rather than getting a tab header of its own, so Flashing
-             stays the selected tab while it is open. -->
+        <!-- Two views share this screen. Custom Options replaces the flashing
+             controls rather than getting a screen of its own. -->
         <Panel>
-        <Grid x:Name="FlashingMainView" Margin="8" RowDefinitions="Auto,*" ColumnDefinitions="*,Auto">
-          <TextBlock x:Name="ModuleInfoHeader" Grid.Row="0" Grid.Column="0" Text="Select a control unit above." Margin="0,0,0,8"/>
+        <Grid x:Name="FlashingMainView" ColumnDefinitions="*,236" ColumnSpacing="14">
 
-          <Grid Grid.Row="1" Grid.Column="0"
-                ColumnDefinitions="130,*" VerticalAlignment="Top"
-                RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto">
-            <TextBlock Grid.Row="0" Grid.Column="0" Text="DME Type" Margin="0,3"/>
-            <TextBlock Grid.Row="1" Grid.Column="0" Text="HW Reference" Margin="0,3"/>
-            <TextBlock Grid.Row="2" Grid.Column="0" Text="SW Reference" Margin="0,3"/>
-            <TextBlock Grid.Row="3" Grid.Column="0" Text="Program Status" Margin="0,3"/>
-            <TextBlock Grid.Row="4" Grid.Column="0" Text="VIN" Margin="0,3"/>
-            <TextBlock Grid.Row="5" Grid.Column="0" Text="Program Ref." Margin="0,3"/>
-            <TextBlock Grid.Row="6" Grid.Column="0" Text="Diag. Protocol" Margin="0,3"/>
+          <!-- the log, like MS4X Flasher's: every status line as it came -->
+          <Border Grid.Column="0" Classes="log">
+            <ScrollViewer x:Name="StatusLogScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+              <TextBlock x:Name="StatusLog" Classes="mono" TextWrapping="Wrap" LineHeight="19"/>
+            </ScrollViewer>
+          </Border>
 
-            <TextBlock x:Name="DMEType_Box"       Grid.Row="0" Grid.Column="1" Margin="0,3"/>
-            <TextBlock x:Name="HWRef_Box"         Grid.Row="1" Grid.Column="1" Margin="0,3"/>
-            <TextBlock x:Name="SWRef_Box"         Grid.Row="2" Grid.Column="1" Margin="0,3"/>
-            <TextBlock x:Name="programStatus_Box" Grid.Row="3" Grid.Column="1" Margin="0,3"/>
-            <TextBlock x:Name="VIN_Box"           Grid.Row="4" Grid.Column="1" Margin="0,3"/>
-            <TextBlock x:Name="progRef_Box"       Grid.Row="5" Grid.Column="1" Margin="0,3"/>
-            <TextBlock x:Name="diagProtocol_Box"  Grid.Row="6" Grid.Column="1" Margin="0,3"/>
-          </Grid>
+          <!-- The identification the code fills in. It is summarised in the
+               ECU box at the top; the fields themselves are kept out of sight. -->
+          <StackPanel Grid.Column="0" IsVisible="False">
+            <TextBlock x:Name="ModuleInfoHeader"/>
+            <TextBlock x:Name="DMEType_Box"/>
+            <TextBlock x:Name="HWRef_Box"/>
+            <TextBlock x:Name="SWRef_Box"/>
+            <TextBlock x:Name="VIN_Box"/>
+            <TextBlock x:Name="progRef_Box"/>
+            <TextBlock x:Name="programStatus_Box"/>
+            <TextBlock x:Name="diagProtocol_Box"/>
+          </StackPanel>
 
-          <!-- Scrolls if the window is ever shorter than the button stack, so
-               the last controls (Full Binary / Custom Options) can't be clipped. -->
-          <ScrollViewer Grid.Row="0" Grid.RowSpan="2" Grid.Column="1"
-                        VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-            <StackPanel Width="210" Spacing="4" HorizontalAlignment="Right">
-              <!-- Choose the module first; the DME and TCU controls are shown
-                   exclusively so their buttons can never be confused. -->
-              <ComboBox x:Name="FlashModuleSelect" HorizontalAlignment="Stretch"
-                        PlaceholderText="Select control unit..."
-                        SelectionChanged="FlashModuleSelect_Changed">
-                <ComboBoxItem Content="DME (engine)"/>
-                <ComboBoxItem Content="TCU (transmission)"/>
-              </ComboBox>
+          <!-- The actions; Custom Options is pinned to the bottom of the
+               column. The stack scrolls if the window is ever shorter than it. -->
+          <Grid Grid.Column="1" RowDefinitions="*,Auto" RowSpacing="10">
+          <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel Spacing="5">
               <Button x:Name="SetPort"      Content="Set Serial Port"        HorizontalAlignment="Stretch" Click="SetPort_Click"/>
-              <Button x:Name="IdentifyDME"  Content="Identify"               HorizontalAlignment="Stretch" Click="IdentifyDME_Click" IsEnabled="False"/>
               <Button x:Name="LoadSGBD"     Content="Load SGBD (.PRG)"       HorizontalAlignment="Stretch" Click="LoadSGBD_Click"/>
 
               <!-- DME controls -->
-              <StackPanel x:Name="DmePanel" Spacing="4">
+              <StackPanel x:Name="DmePanel" Spacing="5">
                 <Button x:Name="ReadTune"     Content="Read DME"               HorizontalAlignment="Stretch" Click="ReadTune_Click"     IsEnabled="False"/>
                 <!-- Only for a car that identified as carrying the map switch. -->
                 <Button x:Name="ReadInstalledMaps" Content="Read Installed Maps" HorizontalAlignment="Stretch" Click="ReadInstalledMaps_Click" IsVisible="False"
-                        ToolTip.Tip="Reads map 1 and map 2 from the car and saves each as a tune file."/>                <Button x:Name="LoadFile"     Content="Load File / .0da"              HorizontalAlignment="Stretch" Click="LoadFile_Click"     IsEnabled="False"/>
-                <TextBlock x:Name="LoadFileName_Box" IsVisible="False" FontSize="11" Opacity="0.7"
+                        ToolTip.Tip="Reads map 1 and map 2 from the car and saves each as a tune file."/>
+                <Button x:Name="LoadFile"     Content="Load File / .0da"       HorizontalAlignment="Stretch" Click="LoadFile_Click"     IsEnabled="False"/>
+                <TextBlock x:Name="LoadFileName_Box" IsVisible="False" Classes="mono faint"
                            TextTrimming="CharacterEllipsis" Margin="2,-2,0,2"/>
                 <!-- Shown when a BMW .0PA / .0DA was loaded in place of a raw
                      binary. It sits under the button it was loaded with,
                      which is greyed out until it is removed. -->
-                <Border x:Name="ExchangeFileRow" IsVisible="False"
-                        BorderThickness="1" BorderBrush="Gray" CornerRadius="4" Padding="6,2">
+                <Border x:Name="ExchangeFileRow" IsVisible="False" Classes="pill">
                   <Grid ColumnDefinitions="*,Auto">
-                    <TextBlock x:Name="ExchangeFile_Box" Grid.Column="0" FontSize="12"
+                    <TextBlock x:Name="ExchangeFile_Box" Grid.Column="0"
                                VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-                    <Button x:Name="ExchangeFileRemove" Grid.Column="1" Content="&#x2715;"
-                            Padding="6,0" Margin="4,0,0,0" Click="ExchangeFileRemove_Click"
+                    <Button x:Name="ExchangeFileRemove" Grid.Column="1" Content="&#x2715;" Classes="key"
+                            Padding="6,1" Margin="4,0,0,0" Click="ExchangeFileRemove_Click"
                             ToolTip.Tip="Remove the loaded file."/>
                   </Grid>
                 </Border>
                 <!-- File 2 and Flash Program only mean something for a full
                      binary, so they stay hidden until Full Binary is ticked. -->
                 <Button x:Name="LoadFile2"    Content="Load File 2 (MPC Flash)" HorizontalAlignment="Stretch" Click="LoadFile2_Click"    IsEnabled="False" IsVisible="False"/>
-                <TextBlock x:Name="LoadFile2Name_Box" IsVisible="False" FontSize="11" Opacity="0.7"
+                <TextBlock x:Name="LoadFile2Name_Box" IsVisible="False" Classes="mono faint"
                            TextTrimming="CharacterEllipsis" Margin="2,-2,0,2"/>
                 <!-- The .0DA paired with a loaded .0PA, which has no tune of
                      its own. Optional: without it the tune on the car stays. -->
-                <Border x:Name="ExchangeTuneRow" IsVisible="False"
-                        BorderThickness="1" BorderBrush="Gray" CornerRadius="4" Padding="6,2">
+                <Border x:Name="ExchangeTuneRow" IsVisible="False" Classes="pill">
                   <Grid ColumnDefinitions="*,Auto">
-                    <TextBlock x:Name="ExchangeTune_Box" Grid.Column="0" FontSize="12"
+                    <TextBlock x:Name="ExchangeTune_Box" Grid.Column="0"
                                VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-                    <Button x:Name="ExchangeTuneRemove" Grid.Column="1" Content="&#x2715;"
-                            Padding="6,0" Margin="4,0,0,0" Click="ExchangeTuneRemove_Click"
+                    <Button x:Name="ExchangeTuneRemove" Grid.Column="1" Content="&#x2715;" Classes="key"
+                            Padding="6,1" Margin="4,0,0,0" Click="ExchangeTuneRemove_Click"
                             ToolTip.Tip="Remove the tune. The tune on the car is then left as it is."/>
                   </Grid>
                 </Border>
-                <Button x:Name="FlashProgram" Content="Flash Program"          HorizontalAlignment="Stretch" Click="FlashProgram_Click" IsEnabled="False" IsVisible="False"/>
-                <Button x:Name="FlashDME"     Content="Flash Tune"             HorizontalAlignment="Stretch" Click="FlashData_Click"    IsEnabled="False"/>
+                <Button x:Name="FlashProgram" Content="Flash Program" Classes="danger" HorizontalAlignment="Stretch" Click="FlashProgram_Click" IsEnabled="False" IsVisible="False"/>
+                <Button x:Name="FlashDME"     Content="Flash Tune"    Classes="danger" HorizontalAlignment="Stretch" Click="FlashData_Click"    IsEnabled="False"/>
                 <CheckBox x:Name="FullBin_CheckBox" Content="Full Binary" IsEnabled="False" Click="FullBin_CheckBox_Changed"/>
-                <Button x:Name="CustomOptions" Content="&#x2699; Custom Options" HorizontalAlignment="Stretch"
-                        Click="CustomOptions_Click"
-                        ToolTip.Tip="EWS delete and map switch."/>
-                <TextBlock x:Name="CustomOptionsSummary_Box" TextWrapping="Wrap" Opacity="0.6" FontSize="11"/>
               </StackPanel>
 
               <!-- TCU controls. The GS20 SGBD has no flash jobs, so this is
                    read-only: a calibration dump for backup/inspection. -->
-              <StackPanel x:Name="TcuPanel" Spacing="4" IsVisible="False">
+              <StackPanel x:Name="TcuPanel" Spacing="5" IsVisible="False">
                 <Button x:Name="ReadTcuCal" Content="Read Calibration" HorizontalAlignment="Stretch"
                         Click="ReadTcuCal_Click" IsEnabled="False"
                         ToolTip.Tip="Dump the transmission calibration (0x090000, 64 KB) to a file."/>
                 <Button x:Name="LoadTcuCal" Content="Load Calibration File" HorizontalAlignment="Stretch"
                         Click="LoadTcuCal_Click" IsEnabled="False"
                         ToolTip.Tip="Pick a 64 KB GS20 calibration to write. Its checksum is corrected automatically."/>
-                <Button x:Name="WriteTcuCal" Content="Write Calibration" HorizontalAlignment="Stretch"
+                <TextBlock x:Name="TcuCalName_Box" IsVisible="False" Classes="mono faint"
+                           TextTrimming="CharacterEllipsis" Margin="2,-2,0,2"/>
+                <!-- Like the DME: the tune (calibration) is the everyday
+                     write; the program only appears behind Full Binary. -->
+                <Button x:Name="WriteTcuCal" Content="Write Calibration" Classes="danger" HorizontalAlignment="Stretch"
                         Click="WriteTcuCal_Click" IsEnabled="False"
                         ToolTip.Tip="Erase and reprogram the transmission calibration over raw DS2."/>
                 <!-- Program write. The one path here whose failure is not
@@ -125,39 +157,55 @@
                      loader. Gated on ident, on the image's software level,
                      and on an explicit acknowledgement. -->
                 <Button x:Name="LoadTcuProgram" Content="Load Program File" HorizontalAlignment="Stretch"
-                        Click="LoadTcuProgram_Click" IsEnabled="False"
+                        Click="LoadTcuProgram_Click" IsEnabled="False" IsVisible="False"
                         ToolTip.Tip="A 256 KB program region, a 512 KB full image, or a BMW .0PA. Its checksum is corrected on the way in."/>
-                <Button x:Name="WriteTcuProgram" Content="Write Program" HorizontalAlignment="Stretch"
-                        Click="WriteTcuProgram_Click" IsEnabled="False"
-                        ToolTip.Tip="Erase the four program sectors (0x0A0000-0x0DFFFF) and reprogram them. Not recoverable over the diagnostic port if it fails."/>
+                <TextBlock x:Name="TcuProgramName_Box" IsVisible="False" Classes="mono faint"
+                           TextTrimming="CharacterEllipsis" Margin="2,-2,0,2"/>
+                <!-- The calibration written straight after the program. A
+                     program of another release than the transmission runs
+                     needs one (the module reports a program/data mismatch
+                     and does not run until it has it); otherwise it is
+                     optional, like the DME's .0DA next to a .0PA. -->
+                <Border x:Name="TcuProgramTuneRow" IsVisible="False" Classes="pill">
+                  <Grid ColumnDefinitions="*,Auto">
+                    <TextBlock x:Name="TcuProgramTune_Box" Grid.Column="0"
+                               VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                    <Button x:Name="TcuProgramTuneRemove" Grid.Column="1" Content="&#x2715;" Classes="key"
+                            Padding="6,1" Margin="4,0,0,0" Click="TcuProgramTuneRemove_Click"
+                            ToolTip.Tip="Remove the calibration. If the program is of another release than the transmission, a calibration is required and Write Program will ask for one."/>
+                  </Grid>
+                </Border>
+                <Button x:Name="WriteTcuProgram" Content="Write Program" Classes="danger" HorizontalAlignment="Stretch"
+                        Click="WriteTcuProgram_Click" IsEnabled="False" IsVisible="False"
+                        ToolTip.Tip="Erase the four program sectors (0x0A0000-0x0DFFFF) and reprogram them, then write the calibration shown above if there is one. Not recoverable over the diagnostic port if it fails."/>
                 <Button x:Name="InstallReadPatch" Content="Install Read Patch" HorizontalAlignment="Stretch"
-                        Click="InstallReadPatch_Click" IsEnabled="False"
+                        Click="InstallReadPatch_Click" IsEnabled="False" IsVisible="False"
                         ToolTip.Tip="Write the built-in 7552700 program with the full-read patch. Only for a transmission already on G2210_0090C0; the calibration is not touched."/>
-                <CheckBox x:Name="NoUpshift_CheckBox" Content="Remove auto upshift" IsEnabled="False"
-                          Click="NoUpshift_CheckBox_Changed"
-                          ToolTip.Tip="Raise every upshift point out of reach so the gearbox holds the gear you select. Applied to the loaded calibration before it is written."/>
+                <CheckBox x:Name="TcuFullBin_CheckBox" Content="Full Binary" Click="TcuFullBin_CheckBox_Changed"
+                          ToolTip.Tip="Show the program write. The calibration is the everyday write; the program is only replaced for an update or a patch."/>
                 <CheckBox x:Name="TcuFastMode" Content="Fast mode" IsChecked="True"
                           ToolTip.Tip="Ask the transmission to talk at 125000 baud instead of 9600. Falls back on its own if the transmission will not."/>
                 <TextBlock Text="Take a backup read first and keep the engine off with a charger on."
-                           Opacity="0.6" FontSize="11" TextWrapping="Wrap"/>
+                           Classes="faint" TextWrapping="Wrap"/>
 
                 <!-- Subcode-8 read. Stock firmware gates 06 to the calibration;
                      a module carrying the patched program answers an extra
-                     subcode that reaches any address. Kept visible without
-                     scrolling: the region picker and its button belong
-                     together, and a picker with its button below the fold
-                     reads as broken. -->
+                     subcode that reaches any address. -->
                 <Separator Margin="0,4,0,0"/>
-                <!-- Full read through the patched program's subcode-8 read.
-                     Enabled only when identify found the module answering
-                     that subcode; a stock module never lights it. -->
                 <Button x:Name="TestFullRead" Content="Read Full" HorizontalAlignment="Stretch"
                         Click="TestFullRead_Click" IsEnabled="False"
                         ToolTip.Tip="Read the whole 512 KB module image (boot block, calibration, program). Needs the patched program; identify checks for it."/>
-
               </StackPanel>
             </StackPanel>
           </ScrollViewer>
+
+          <StackPanel Grid.Row="1" Spacing="5">
+            <Button x:Name="CustomOptions" Content="&#x2699;&#xFE0E; Custom Options" HorizontalAlignment="Stretch"
+                    Click="CustomOptions_Click"
+                    ToolTip.Tip="EWS delete and map switch."/>
+            <TextBlock x:Name="CustomOptionsSummary_Box" TextWrapping="Wrap" Classes="faint"/>
+          </StackPanel>
+          </Grid>
         </Grid>
 
         <!-- ============ Custom Options ============ -->
@@ -165,92 +213,108 @@
              car; the Flashing view stays the one place that writes to the DME. -->
         <ScrollViewer x:Name="CustomOptionsView" IsVisible="False"
                       VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-          <StackPanel Margin="8" Spacing="10">
-            <Grid ColumnDefinitions="Auto,*">
-              <Button x:Name="CustomOptionsBack" Grid.Column="0" Content="&#x2190; Back"
-                      Click="CustomOptionsBack_Click"/>
-              <TextBlock Grid.Column="1" Text="Custom Options" FontWeight="SemiBold" FontSize="15"
-                         VerticalAlignment="Center" Margin="12,0,0,0"/>
-            </Grid>
+          <StackPanel Spacing="12">
+            <StackPanel Orientation="Horizontal" Spacing="12">
+              <Button x:Name="CustomOptionsBack" Content="&#x2039;  Back" Classes="key"
+                      VerticalAlignment="Center" Click="CustomOptionsBack_Click"/>
+              <TextBlock Classes="h1" Text="Custom Options" VerticalAlignment="Center"/>
+            </StackPanel>
 
             <!-- EWS delete. Only meaningful for a full-binary program flash: the
                  patch sites live in the program area, not the tune/parameter area. -->
-            <TextBlock Text="EWS Delete" FontWeight="SemiBold"/>
-            <CheckBox x:Name="EwsDelete_CheckBox" Content="EWS Delete" IsEnabled="False"
-                      Click="EwsDelete_CheckBox_Changed"
-                      ToolTip.Tip="Patch the immobilizer check out of the program before flashing. MS45.1 only."/>
-            <TextBlock x:Name="EwsDeleteReason_Box" TextWrapping="Wrap" Opacity="0.6" FontSize="11"/>
-
-            <Separator/>
-
-            <TextBlock Text="Map Switch" FontWeight="SemiBold"/>
-              <TextBlock TextWrapping="Wrap" Opacity="0.8"
-                         Text="Experimental. Builds an MS45.1 program (0044570LO02S) that holds two complete tunes: maps, curves and single values all switch. With the ignition on and the engine stopped, the trigger below switches tunes; the tach then shows 1000 rpm for map 1 or 2000 rpm for map 2. It also shows the active map for 3 seconds at ignition-on."/>
-
-              <StackPanel Orientation="Horizontal" Spacing="12">
-                <TextBlock Text="Trigger:" VerticalAlignment="Center"/>
-                <RadioButton x:Name="MapSwitchTriggerDsc" GroupName="MapSwitchTrigger" IsChecked="True"
-                             Content="DSC button" Click="MapSwitchTrigger_Click"
-                             ToolTip.Tip="Short presses of the DSC button (the DTC on/off ones, not the long hold) within about 2 seconds of each other. DTC ends up as it started."/>
-                <RadioButton x:Name="MapSwitchPresses4" GroupName="MapSwitchPresses" IsChecked="True"
-                             Content="4 presses" Click="MapSwitchTrigger_Click"/>
-                <RadioButton x:Name="MapSwitchPresses2" GroupName="MapSwitchPresses"
-                             Content="2 presses" Click="MapSwitchTrigger_Click"
-                             ToolTip.Tip="Quicker, but two quick presses with the engine stopped is easier to do by accident."/>
-                <RadioButton x:Name="MapSwitchTriggerPedals" GroupName="MapSwitchTrigger"
-                             Content="Brake + full throttle, 5 s" Click="MapSwitchTrigger_Click"
-                             ToolTip.Tip="Hold the brake and floor the throttle for 5 seconds."/>
+            <Border x:Name="EwsSection" Classes="section">
+              <StackPanel Spacing="8">
+                <TextBlock Classes="code" Text="EWS DELETE"/>
+                <CheckBox x:Name="EwsDelete_CheckBox" Content="EWS Delete" IsEnabled="False"
+                          Click="EwsDelete_CheckBox_Changed"
+                          ToolTip.Tip="Patch the immobilizer check out of the program before flashing. MS45.1 only."/>
+                <TextBlock x:Name="EwsDeleteReason_Box" TextWrapping="Wrap" Classes="faint"/>
               </StackPanel>
+            </Border>
 
+            <Border x:Name="MapSwitchSection" Classes="section">
+              <StackPanel Spacing="10">
+                <TextBlock Classes="code" Text="MAP SWITCH"/>
+                <TextBlock TextWrapping="Wrap" Classes="dim"
+                           Text="Two full tunes in one MS45.1 program (0044570LO02S). The DSC button switches at any time, even while driving (presses in the first 10 s after ignition-on are ignored); the pedals only with the engine stopped. Engine off, the tach shows 1000 rpm for map 1 or 2000 rpm for map 2, also for 3 s at ignition-on; engine running, the check-engine lamp blinks once for map 1, twice for map 2."/>
 
-              <Grid ColumnDefinitions="200,*" RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="6" ColumnSpacing="8">
-                <Button x:Name="MapSwitchLoadFlash" Grid.Row="0" Grid.Column="0" Content="External Flash / .0pa..."
-                        HorizontalAlignment="Stretch" Click="MapSwitchLoadFlash_Click"
-                        ToolTip.Tip="The 1 MB external flash image to build from, or a BMW .0PA program file, which fills in the MPC as well."/>
-                <TextBlock x:Name="MapSwitchFlash_Box" Grid.Row="0" Grid.Column="1"
-                           VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Text="(none)"/>
+                <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto" ColumnSpacing="12" RowSpacing="2">
+                  <TextBlock Grid.Row="0" Grid.Column="0" Classes="dim" Text="Trigger" VerticalAlignment="Center"/>
+                  <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal" Spacing="16">
+                    <RadioButton x:Name="MapSwitchTriggerDsc" GroupName="MapSwitchTrigger" IsChecked="True"
+                                 Content="DSC button" Click="MapSwitchTrigger_Click"
+                                 ToolTip.Tip="Short presses of the DSC button (the DTC on/off ones, not the long hold) within about 2 seconds of each other. DTC ends up as it started."/>
+                    <RadioButton x:Name="MapSwitchTriggerPedals" GroupName="MapSwitchTrigger"
+                                 Content="Brake + full throttle, 5 s" Click="MapSwitchTrigger_Click"
+                                 ToolTip.Tip="Hold the brake and floor the throttle for 5 seconds."/>
+                  </StackPanel>
 
-                <Button x:Name="MapSwitchLoadMpc" Grid.Row="1" Grid.Column="0" Content="MPC Flash / .0pa..."
-                        HorizontalAlignment="Stretch" Click="MapSwitchLoadMpc_Click"
-                        ToolTip.Tip="The 448 KB internal flash image that belongs to the external flash, or a BMW .0PA program file to take it from."/>
-                <TextBlock x:Name="MapSwitchMpc_Box" Grid.Row="1" Grid.Column="1"
-                           VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Text="(none)"/>
+                  <TextBlock x:Name="MapSwitchPressesLabel" Grid.Row="1" Grid.Column="0" Classes="dim" Text="Presses" VerticalAlignment="Center"/>
+                  <StackPanel x:Name="MapSwitchPressesRow" Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Spacing="16">
+                    <RadioButton x:Name="MapSwitchPresses4" GroupName="MapSwitchPresses" IsChecked="True"
+                                 Content="4" Click="MapSwitchTrigger_Click"/>
+                    <RadioButton x:Name="MapSwitchPresses2" GroupName="MapSwitchPresses"
+                                 Content="2" Click="MapSwitchTrigger_Click"
+                                 ToolTip.Tip="Quicker, but two quick presses with the engine stopped is easier to do by accident."/>
+                  </StackPanel>
+                </Grid>
 
-                <Button x:Name="MapSwitchLoadMap1" Grid.Row="2" Grid.Column="0" Content="Map 1 Tune / .0da..."
-                        HorizontalAlignment="Stretch" Click="MapSwitchLoadMap1_Click"
-                        ToolTip.Tip="Optional. A tune partial, a full image, or a BMW .0DA data file. Left empty, the tune inside the external flash is kept."/>
-                <TextBlock x:Name="MapSwitchMap1_Box" Grid.Row="2" Grid.Column="1"
-                           VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Text="(none)"/>
+                <Grid ColumnDefinitions="200,*" RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="6" ColumnSpacing="10">
+                  <Button x:Name="MapSwitchLoadFlash" Grid.Row="0" Grid.Column="0" Content="External Flash / .0pa..."
+                          HorizontalAlignment="Stretch" Click="MapSwitchLoadFlash_Click"
+                          ToolTip.Tip="The 1 MB external flash image to build from, or a BMW .0PA program file, which fills in the MPC as well."/>
+                  <TextBlock x:Name="MapSwitchFlash_Box" Grid.Row="0" Grid.Column="1" Classes="mono dim"
+                             VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Text="(none)"/>
 
-                <Button x:Name="MapSwitchLoadMap2" Grid.Row="3" Grid.Column="0" Content="Map 2 Tune / .0da..."
-                        HorizontalAlignment="Stretch" Click="MapSwitchLoadMap2_Click"
-                        ToolTip.Tip="Optional. A tune partial, a full image, or a BMW .0DA data file. Left empty, map 2 is a copy of map 1."/>
-                <TextBlock x:Name="MapSwitchMap2_Box" Grid.Row="3" Grid.Column="1"
-                           VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Text="(none)"/>
-              </Grid>
+                  <Button x:Name="MapSwitchLoadMpc" Grid.Row="1" Grid.Column="0" Content="MPC Flash / .0pa..."
+                          HorizontalAlignment="Stretch" Click="MapSwitchLoadMpc_Click"
+                          ToolTip.Tip="The 448 KB internal flash image that belongs to the external flash, or a BMW .0PA program file to take it from."/>
+                  <TextBlock x:Name="MapSwitchMpc_Box" Grid.Row="1" Grid.Column="1" Classes="mono dim"
+                             VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Text="(none)"/>
 
-              <StackPanel Orientation="Horizontal" Spacing="8">
-                <Button x:Name="MapSwitchUseLoaded" Content="Use Loaded Files" Click="MapSwitchUseLoaded_Click"
-                        ToolTip.Tip="Take the external flash and MPC flash already loaded for flashing."/>
-                <Button x:Name="MapSwitchClearMaps" Content="Reset Maps" Click="MapSwitchClearMaps_Click"
-                        ToolTip.Tip="Forget the chosen map 1 and map 2 tunes."/>
+                  <Button x:Name="MapSwitchLoadMap1" Grid.Row="2" Grid.Column="0" Content="Map 1 Tune / .0da..."
+                          HorizontalAlignment="Stretch" Click="MapSwitchLoadMap1_Click"
+                          ToolTip.Tip="Optional. A tune partial, a full image, or a BMW .0DA data file. Left empty, the tune inside the external flash is kept."/>
+                  <TextBlock x:Name="MapSwitchMap1_Box" Grid.Row="2" Grid.Column="1" Classes="mono dim"
+                             VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Text="(none)"/>
+
+                  <Button x:Name="MapSwitchLoadMap2" Grid.Row="3" Grid.Column="0" Content="Map 2 Tune / .0da..."
+                          HorizontalAlignment="Stretch" Click="MapSwitchLoadMap2_Click"
+                          ToolTip.Tip="Optional. A tune partial, a full image, or a BMW .0DA data file. Left empty, map 2 is a copy of map 1."/>
+                  <TextBlock x:Name="MapSwitchMap2_Box" Grid.Row="3" Grid.Column="1" Classes="mono dim"
+                             VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Text="(none)"/>
+                </Grid>
+
+                <Separator/>
+
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                  <Button x:Name="MapSwitchBuild" Content="Build" Classes="primary" Click="MapSwitchBuild_Click" IsEnabled="False"/>
+                  <Button x:Name="MapSwitchSave" Content="Save Files..." Click="MapSwitchSave_Click" IsEnabled="False"
+                          ToolTip.Tip="Save the built external flash and MPC flash, checksummed and signed."/>
+                  <Button x:Name="MapSwitchSend" Content="Load for Flashing" Click="MapSwitchSend_Click" IsEnabled="False"
+                          ToolTip.Tip="Load the built pair as the full binary to flash, ready for Flash Program."/>
+                </StackPanel>
+
+                <TextBlock x:Name="MapSwitchReport_Box" TextWrapping="Wrap" Classes="mono"
+                           Text="Choose an external flash and its MPC flash."/>
+
+                <TextBlock TextWrapping="Wrap" Classes="faint"
+                           Text="Map 2 is stored inside the program area, so changing it needs a full program flash; map 1 can still be written with Flash Tune."/>
               </StackPanel>
+            </Border>
 
-              <Separator/>
-
-              <StackPanel Orientation="Horizontal" Spacing="8">
-                <Button x:Name="MapSwitchBuild" Content="Build" Click="MapSwitchBuild_Click" IsEnabled="False"/>
-                <Button x:Name="MapSwitchSave" Content="Save Files..." Click="MapSwitchSave_Click" IsEnabled="False"
-                        ToolTip.Tip="Save the built external flash and MPC flash, checksummed and signed."/>
-                <Button x:Name="MapSwitchSend" Content="Load for Flashing" Click="MapSwitchSend_Click" IsEnabled="False"
-                        ToolTip.Tip="Load the built pair as the full binary to flash, ready for Flash Program."/>
+            <!-- Transmission options. Shown in place of the DME sections when
+                 the TCU is the selected module. -->
+            <Border x:Name="TcuUpshiftSection" Classes="section" IsVisible="False">
+              <StackPanel Spacing="8">
+                <TextBlock Classes="code" Text="REMOVE AUTO UPSHIFT"/>
+                <TextBlock TextWrapping="Wrap" Classes="dim"
+                           Text="Raises every upshift point out of reach, so the gearbox holds whichever gear is selected and never changes up on its own. The engine runs to the limiter instead of shifting, and the car will not move off again until you shift by hand. Applied to the loaded calibration before it is written; the file on disk is not changed."/>
+                <CheckBox x:Name="NoUpshift_CheckBox" Content="Remove auto upshift" IsEnabled="False"
+                          Click="NoUpshift_CheckBox_Changed"/>
+                <TextBlock x:Name="NoUpshiftReason_Box" TextWrapping="Wrap" Classes="faint"/>
               </StackPanel>
-
-              <TextBlock x:Name="MapSwitchReport_Box" TextWrapping="Wrap" FontSize="12"
-                         Text="Choose an external flash and its MPC flash."/>
-
-              <TextBlock TextWrapping="Wrap" Opacity="0.6" FontSize="11"
-                         Text="Map 2 is stored inside the program area, so changing it needs a full program flash; map 1 can still be written with Flash Tune."/>
+            </Border>
           </StackPanel>
         </ScrollViewer>
         </Panel>
@@ -260,18 +324,18 @@
       <!-- Disabled until the DME is identified, since every action here needs a
            resolved SGBD and a live connection. -->
       <TabItem x:Name="FaultsTab" Header="Fault Codes" IsEnabled="False">
-        <Grid Margin="8" RowDefinitions="Auto,*">
-          <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
-            <TextBlock Text="Module:" VerticalAlignment="Center"/>
-            <ComboBox x:Name="ModuleSelect" Width="150"
+        <Grid RowDefinitions="Auto,*">
+          <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8" Margin="0,0,0,10">
+            <TextBlock Classes="dim" Text="Module" VerticalAlignment="Center"/>
+            <ComboBox x:Name="ModuleSelect" Width="170"
                       SelectionChanged="ModuleSelect_Changed">
               <ComboBoxItem Content="DME (engine)"/>
               <ComboBoxItem Content="TCU (transmission)"/>
             </ComboBox>
-            <Button x:Name="ReadFaults"   Content="Read Fault Codes"  Click="ReadFaults_Click"/>
-            <Button x:Name="ClearFaults"  Content="Clear Fault Codes" Click="ClearFaults_Click"/>
+            <Button x:Name="ReadFaults"   Content="Read Fault Codes" Classes="primary" Click="ReadFaults_Click"/>
+            <Button x:Name="ClearFaults"  Content="Clear Fault Codes" Classes="danger" Click="ClearFaults_Click"/>
             <Button x:Name="ExportFaults" Content="Export CSV"        Click="ExportFaults_Click" IsEnabled="False"/>
-            <TextBlock x:Name="faultCount_Box" VerticalAlignment="Center" Margin="8,0,0,0"/>
+            <TextBlock x:Name="faultCount_Box" Classes="mono dim" VerticalAlignment="Center" Margin="8,0,0,0"/>
           </StackPanel>
 
           <DataGrid x:Name="FaultGrid" Grid.Row="1"
@@ -286,17 +350,147 @@
           </DataGrid>
 
           <TextBlock Grid.Row="1" VerticalAlignment="Bottom" HorizontalAlignment="Center"
-                     Margin="0,0,0,6" Opacity="0.6" FontSize="12"
+                     Margin="0,0,0,6" Classes="faint"
                      Text="Double-click a fault for full details"/>
         </Grid>
       </TabItem>
 
+      <!-- ============ Live Log ============ -->
+      <!-- Polls the chosen modules over the K-line and writes every sample
+           to a CSV in the app's folder. For intermittent faults: three
+           modules see the ignition switch from different places. -->
+      <TabItem x:Name="LiveTab" Header="Live Log" IsEnabled="False">
+        <Grid RowDefinitions="Auto,Auto,*">
+          <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="10" Margin="0,0,0,10">
+            <CheckBox x:Name="LiveDme_CheckBox" Content="DME" IsChecked="True"
+                      ToolTip.Tip="rpm, battery voltage at the DME, its terminal-15 input, temperatures, pedal, air mass, speed"/>
+            <CheckBox x:Name="LiveGm5_CheckBox" Content="Body module (GM5)" IsChecked="True"
+                      ToolTip.Tip="terminals R / 15 / 50 / 58 as the body module sees them, straight off the ignition switch, and its two terminal-30 supply voltages"/>
+            <CheckBox x:Name="LiveKombi_CheckBox" Content="Cluster" IsChecked="False"
+                      ToolTip.Tip="terminals 15 / R / 30 / 50 at the instrument cluster"/>
+            <Button x:Name="LiveStart" Content="Start" Classes="primary" Click="LiveStart_Click"/>
+            <Button x:Name="LiveShowFolder" Content="Show Files" Click="LiveShowFolder_Click"
+                    ToolTip.Tip="Open the folder with the CSV logs."/>
+          </StackPanel>
+          <Border Grid.Row="1" Classes="section" Margin="0,0,0,8">
+            <TextBlock x:Name="LiveSummary" Classes="mono" TextWrapping="Wrap" Text="not running"/>
+          </Border>
+          <Border Grid.Row="2" Classes="log">
+            <ScrollViewer>
+              <TextBox x:Name="LiveEvents" Classes="mono" IsReadOnly="True" TextWrapping="Wrap"
+                       AcceptsReturn="True" BorderThickness="0" Background="Transparent"/>
+            </ScrollViewer>
+          </Border>
+        </Grid>
+      </TabItem>
+
+      <!-- ============ History ============ -->
+      <!-- Every logged session, kept on this machine only (history.jsonl next
+           to settings.json). Nothing here talks to the car or the network. -->
+      <TabItem x:Name="HistoryTab" Header="History">
+        <Grid RowDefinitions="Auto,*,Auto">
+          <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8" Margin="0,0,0,10">
+            <Button x:Name="HistoryOpenLog" Content="Open Log" Click="HistoryOpenLog_Click" IsEnabled="False"
+                    ToolTip.Tip="Open the selected session's telegram log."/>
+            <Button x:Name="HistoryOpenFiles" Content="Open Files" Click="HistoryOpenFiles_Click" IsEnabled="False"
+                    ToolTip.Tip="Open the folder with the copies of the images the selected session wrote."/>
+            <Button x:Name="HistoryShowFolder" Content="Show Files" Click="HistoryShowFolder_Click"
+                    ToolTip.Tip="Open the folder that holds the history and the logs."/>
+            <Button x:Name="HistoryClear" Content="Clear History" Classes="danger" Click="HistoryClear_Click"/>
+            <TextBlock x:Name="HistoryCount_Box" Classes="mono dim" VerticalAlignment="Center" Margin="8,0,0,0"/>
+          </StackPanel>
+
+          <DataGrid x:Name="HistoryGrid" Grid.Row="1"
+                    x:DataType="local:MainWindow+HistoryRow"
+                    IsReadOnly="True" GridLinesVisibility="Horizontal"
+                    HeadersVisibility="Column" CanUserResizeColumns="True"
+                    SelectionChanged="HistoryGrid_SelectionChanged">
+            <DataGrid.Columns>
+              <DataGridTextColumn Header="Date"      Binding="{Binding Time}"      Width="140"/>
+              <DataGridTextColumn Header="Operation" Binding="{Binding Operation}" Width="160"/>
+              <DataGridTextColumn Header="Result"    Binding="{Binding Result}"    Width="100"/>
+              <DataGridTextColumn Header="Car"       Binding="{Binding Car}"       Width="150"/>
+              <DataGridTextColumn Header="Details"   Binding="{Binding Details}"   Width="*"/>
+            </DataGrid.Columns>
+          </DataGrid>
+
+          <TextBlock x:Name="HistoryStatus_Box" Grid.Row="2" Margin="0,8,0,0" Classes="mono dim"
+                     TextWrapping="Wrap" Text="Select a session to see how it ended."/>
+        </Grid>
+      </TabItem>
+
+      <!-- ============ Settings ============ -->
+      <TabItem x:Name="SettingsTab" Header="Settings">
+        <StackPanel Spacing="12">
+          <Border Classes="section">
+            <StackPanel Spacing="8">
+              <TextBlock Classes="code" Text="SKIN"/>
+              <ComboBox x:Name="ThemeSelect" MinWidth="180" HorizontalAlignment="Left" SelectionChanged="ThemeSelect_Changed"
+                        ToolTip.Tip="The look, as in BMWeb's Settings."/>
+            </StackPanel>
+          </Border>
+
+          <Border Classes="section">
+            <StackPanel Spacing="8">
+              <TextBlock Classes="code" Text="FILES"/>
+              <CheckBox x:Name="KeepFlashedFiles_CheckBox" Content="Keep a copy of every file written to a module"
+                        Click="KeepFlashedFiles_Changed"
+                        ToolTip.Tip="Each flash or write session gets a folder with the exact images sent to the module; its History entry opens them."/>
+              <TextBlock Classes="dim" TextWrapping="Wrap"
+                         Text="Settings, the ECU data, the session logs, the history and those copies all live in the app's folder on this machine. Nothing is sent anywhere."/>
+              <Button x:Name="SettingsShowFolder" Content="Show Files" HorizontalAlignment="Left"
+                      Click="HistoryShowFolder_Click"/>
+            </StackPanel>
+          </Border>
+
+          <Border Classes="section">
+            <StackPanel Spacing="8">
+              <TextBlock Classes="code" Text="PROGRAMMING RECORD"/>
+              <CheckBox x:Name="WriteAif_CheckBox" Content="Log every flash in the module (AIF)"
+                        Click="WriteAif_Changed"
+                        ToolTip.Tip="After a successful flash, append an entry (VIN, date, part numbers, program reference) to the module's programming log, which BMW's tools read as its history."/>
+              <TextBlock Classes="dim" TextWrapping="Wrap"
+                         Text="A module keeps 14 entries and they cannot be erased. Before a flash the app says how many are left and asks whether to go on. With this off, nothing is written to the log and no question is asked."/>
+            </StackPanel>
+          </Border>
+
+          <!-- Recovery tools. Shown to everyone; they only need an
+               identified DME, not a development build. -->
+          <Border Classes="section">
+            <StackPanel Spacing="8">
+              <TextBlock Classes="code" Text="TESTING ONLY"/>
+              <!-- For a flash that stopped after the program was written but
+                   before it was verified: the DME then keeps the application
+                   from running until both signature checks have passed.
+                   Nothing is written. -->
+              <Button x:Name="VerifyProgram" Content="Finish Programming" HorizontalAlignment="Left" Click="VerifyProgram_Click" IsEnabled="False"
+                      ToolTip.Tip="Runs the DME's program and calibration signature checks and resets it, without writing anything. For a DME left in the bootloader by a flash that failed part-way (programming status stays at 5 until the program is verified)."/>
+              <TextBlock Classes="dim" TextWrapping="Wrap"
+                         Text="Runs the DME's program and calibration signature checks and resets it; nothing is written. For a DME left in the bootloader by a flash that stopped part-way. Needs an identified DME."/>
+            </StackPanel>
+          </Border>
+
+          <!-- Only a development build (BMWEB_ENV=development) shows this. -->
+          <Border x:Name="DevSection" Classes="section" IsVisible="False">
+            <StackPanel Spacing="8">
+              <TextBlock Classes="code" Text="DEVELOPMENT"/>
+              <CheckBox x:Name="DevUi_CheckBox" Content="Dev mode UI" Click="DevUi_Changed"
+                        ToolTip.Tip="Off shows the app exactly as an end user sees it: Custom Options, Full Binary and the load buttons wait for an identified MS45.1."/>
+              <TextBlock Classes="dim" TextWrapping="Wrap"
+                         Text="This build runs with BMWEB_ENV=development. Untick to see the app as a release build shows it; the .env file is not changed."/>
+            </StackPanel>
+          </Border>
+        </StackPanel>
+      </TabItem>
+
     </TabControl>
 
-    <TextBlock x:Name="statusTextBlock" Grid.Row="1"
-               Margin="20,10,20,6" TextWrapping="Wrap"/>
-
-    <ProgressBar x:Name="ProgressDME" Grid.Row="2"
-                 Margin="20,0,20,16" Minimum="0" Maximum="100" Value="0" Height="24"/>
+    <!-- ============ status bar ============ -->
+    <Border Grid.Column="1" Grid.Row="2" Classes="bar" BorderThickness="0,1,0,0" Padding="14,9,14,11" Margin="0,12,0,0">
+      <Grid RowDefinitions="Auto,Auto" RowSpacing="7">
+        <TextBlock x:Name="statusTextBlock" Grid.Row="0" Classes="mono" TextWrapping="Wrap" Text="ready"/>
+        <ProgressBar x:Name="ProgressDME" Grid.Row="1" Minimum="0" Maximum="100" Value="0" Height="12"/>
+      </Grid>
+    </Border>
   </Grid>
 </Window>

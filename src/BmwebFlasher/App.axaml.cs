@@ -14,6 +14,9 @@ public partial class App : Application
 
     public override void OnFrameworkInitializationCompleted()
     {
+        // The skin before any window, so nothing is ever drawn in another.
+        Skins.Apply(this, Global.Theme);
+
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             // Close when the main window closes, rather than when the last

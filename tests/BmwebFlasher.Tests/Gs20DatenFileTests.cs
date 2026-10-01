@@ -166,7 +166,9 @@ namespace BmwebFlasher.Tests
             Assert.False(Gs20DatenFile.HasTrailer(blanked));
         }
 
-        [Theory]
+        // SkippableTheory, not Theory: Skip.IfNot throws, and a plain Theory
+        // reports that as a failure on every machine without SP-Daten.
+        [SkippableTheory]
         [InlineData("A7557995.0DA", "G2210_0090C0ES10", "E46 M54B30 USA SPORT MY06")]
         [InlineData("A7557985.0DA", "G2210_0090C0DP10", "E46/16 M54B30 USA MY06")]
         public void ReadsTheHeaderOfARealDatenFile(string file, string reference,

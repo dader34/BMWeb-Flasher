@@ -38,6 +38,11 @@ namespace BmwebFlasher
             if (AppEnvironment.IsDevelopment)
                 return true;
 
+            // The transmission's options only apply to a GS20, which identify
+            // establishes.
+            if (_flashTcu)
+                return string.Equals(_tcuSgbd, "gs20.prg", StringComparison.OrdinalIgnoreCase);
+
             return _dmeIdentified &&
                    FlashModuleSelect.SelectedIndex == 0 &&
                    Global.HW_Ref == "0044570" &&
@@ -67,8 +72,10 @@ namespace BmwebFlasher
             bool allowed = CustomOptionsAllowed();
             CustomOptions.IsVisible = allowed;
             CustomOptionsSummary_Box.IsVisible = allowed;
+            Avalonia.Controls.ToolTip.SetTip(CustomOptions, _flashTcu ? "Remove auto upshift." : "EWS delete and map switch.");
             if (!allowed)
                 ShowCustomOptions(false);
+            RefreshCustomOptionsSummary();
         }
 
         private void ShowCustomOptions(bool show)
@@ -76,12 +83,21 @@ namespace BmwebFlasher
             if (CustomOptionsView == null || FlashingMainView == null) return; // during init
             CustomOptionsView.IsVisible = show;
             FlashingMainView.IsVisible = !show;
+            RefreshRail();
         }
 
         private void CustomOptions_Click(object sender, RoutedEventArgs e)
         {
             if (!CustomOptionsAllowed()) return;
-            RefreshEwsDeleteGate();
+            // One view serves both modules; only the selected module's
+            // sections are shown.
+            EwsSection.IsVisible = !_flashTcu;
+            MapSwitchSection.IsVisible = !_flashTcu;
+            TcuUpshiftSection.IsVisible = _flashTcu;
+            if (_flashTcu)
+                RefreshNoUpshiftGate();
+            else
+                RefreshEwsDeleteGate();
             ShowCustomOptions(true);
         }
 
@@ -113,6 +129,12 @@ namespace BmwebFlasher
             if (CustomOptionsSummary_Box == null) return;
 
             var active = new System.Collections.Generic.List<string>();
+            if (_flashTcu)
+            {
+                CustomOptionsSummary_Box.Text = NoUpshift_CheckBox.IsChecked == true
+                    ? "On: no auto upshift" : string.Empty;
+                return;
+            }
             if (EwsDelete_CheckBox.IsChecked == true)
                 active.Add("EWS delete");
             if (Global.openedMPC != null && MapSwitch.IsAlreadyPatched(Global.openedMPC))
@@ -295,13 +317,15 @@ namespace BmwebFlasher
                     return ", no map switch";
                 case MapSwitch.CarState.Current:
                 case MapSwitch.CarState.Earlier:
+                    // Only the trigger and whether it is current: the scope
+                    // is always the full tune now, and the map 2 version is
+                    // the program's data version, which says nothing useful.
                     return ", map switch installed (" +
                            (_carTrigger != null
                                ? MapSwitch.Describe(_carTrigger.Value, _carDscPresses ?? MapSwitch.DefaultDscPresses)
                                : "unknown trigger") +
-                           (_carScope != null ? ", " + MapSwitch.Describe(_carScope.Value) : string.Empty) +
                            (_carMapSwitch == MapSwitch.CarState.Earlier ? ", earlier version)" : ")") +
-                           (_carMap2Version != null ? ", map 2 " + _carMap2Version : ", no map 2 stored");
+                           (_carMap2Version == null ? ", no map 2 stored" : string.Empty);
                 case MapSwitch.CarState.Unrecognised:
                     return ", MPC carries an unrecognised modification";
                 default:
@@ -378,8 +402,8 @@ namespace BmwebFlasher
         {
             // The press count only means something for the DSC button.
             bool dsc = SelectedTrigger == MapSwitch.Trigger.DscButton;
-            MapSwitchPresses4.IsEnabled = dsc;
-            MapSwitchPresses2.IsEnabled = dsc;
+            MapSwitchPressesLabel.IsVisible = dsc;
+            MapSwitchPressesRow.IsVisible = dsc;
             MapSwitchInputsChanged();
         }
 
@@ -527,11 +551,12 @@ namespace BmwebFlasher
         /// program is (or is about to be) EWS-deleted. Map 1 is asked about;
         /// map 2, when the image has one, is matched without asking.
         ///
-        /// Map 1 is the one that matters: single values, the immobilizer flags
-        /// among them, always come from it, and an EWS-deleted program with
-        /// the flags still on cranks but does not start (fault P1665). Map 2's
-        /// flags are never read, so matching them only keeps the stored tune
-        /// consistent, for the day it is used as a map 1, and needs no prompt.
+        /// An EWS-deleted program with the flags still on in the selected map
+        /// cranks but does not start (fault P1665). Map 1 is asked about
+        /// because a user may have loaded it deliberately; map 2 is only ever
+        /// a copy of a tune, so it is matched without a prompt. Under the
+        /// full-tune scope the flags are read from whichever map is selected,
+        /// so both maps must agree with the program.
         ///
         /// Returns the image to use, which is a copy when anything changed.
         /// </summary>
@@ -610,13 +635,7 @@ namespace BmwebFlasher
                     report.AppendLine(line);
                 if (built.MapsIdentical)
                     report.AppendLine("Map 1 and map 2 are identical, so switching will change nothing yet.");
-                report.AppendLine("Checksums corrected and both partitions signed.");
-                report.AppendLine();
-                report.Append("Not yet proven on a car. The build assumes RAM at 0x" +
-                              MapSwitch.RamFlag.ToString("X") + "-0x" + (MapSwitch.RamFlag + 2).ToString("X") +
-                              " and 0x" + MapSwitch.RamDisplayCounter.ToString("X") +
-                              " is unused, and that the engine speed frame is built " +
-                              MapSwitch.CallsPerSecond + " times a second.");
+                report.Append("Checksums corrected and both partitions signed.");
                 MapSwitchReport_Box.Text = report.ToString();
                 SetStatus("Map switch built");
             }

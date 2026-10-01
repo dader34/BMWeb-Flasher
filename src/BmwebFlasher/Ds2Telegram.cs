@@ -68,12 +68,14 @@ namespace BmwebFlasher
         {
             1 => "complete",
             2 => "flash fault 2 (write rejected)",
+            3 => "flash fault 3 (not programmed: flash not blank)",
+            8 => "flash fault 8 (erase refused)",
             9 => "flash fault 9",
             10 => "flash fault 10",
             11 => "flash fault 11",
             12 => "flash fault 12",
             13 => "flash fault 13",
-            14 => "flash fault 14",
+            14 => "flash fault 14 (program written but not accepted by the boot block)",
             15 => "flash fault 15",
             _ => "unknown sub-status 0x" + subStatus.ToString("X2"),
         };

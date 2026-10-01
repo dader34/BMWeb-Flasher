@@ -1,0 +1,395 @@
+<!-- The look of BMWeb (the web app) for Avalonia: its instrument-cluster
+     styling, panels with a hairline border, the accent for anything active,
+     mono readouts. Every colour and font comes from the skin resources that
+     Skins.Apply sets, so the sheet is the same for all six skins. -->
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+  <!-- window and text -->
+  <Style Selector="Window">
+    <Setter Property="Background" Value="{DynamicResource BwBgBrush}"/>
+    <Setter Property="Foreground" Value="{DynamicResource BwInkBrush}"/>
+    <Setter Property="FontFamily" Value="{DynamicResource BwDisplayFont}"/>
+    <Setter Property="FontSize" Value="13"/>
+  </Style>
+  <Style Selector="TextBlock">
+    <Setter Property="Foreground" Value="{DynamicResource BwInkBrush}"/>
+  </Style>
+  <Style Selector="TextBlock.dim">
+    <Setter Property="Foreground" Value="{DynamicResource BwInkDimBrush}"/>
+  </Style>
+  <Style Selector="TextBlock.faint">
+    <Setter Property="Foreground" Value="{DynamicResource BwInkFaintBrush}"/>
+    <Setter Property="FontSize" Value="11.5"/>
+  </Style>
+  <Style Selector="TextBlock.mono">
+    <Setter Property="FontFamily" Value="{DynamicResource BwMonoFont}"/>
+    <Setter Property="FontSize" Value="12"/>
+  </Style>
+  <!-- the stamp on a section: small mono capitals in the soft accent, like BMWeb's module cards -->
+  <Style Selector="TextBlock.code">
+    <Setter Property="FontFamily" Value="{DynamicResource BwMonoFont}"/>
+    <Setter Property="FontSize" Value="10.5"/>
+    <Setter Property="FontWeight" Value="Bold"/>
+    <Setter Property="LetterSpacing" Value="1.2"/>
+    <Setter Property="Foreground" Value="{DynamicResource BwAccentSoftBrush}"/>
+  </Style>
+  <Style Selector="TextBlock.h1">
+    <Setter Property="FontSize" Value="17"/>
+    <Setter Property="FontWeight" Value="ExtraBold"/>
+  </Style>
+  <Style Selector="TextBlock.h2">
+    <Setter Property="FontSize" Value="14"/>
+    <Setter Property="FontWeight" Value="Bold"/>
+  </Style>
+  <Style Selector="TextBlock.accent">
+    <Setter Property="Foreground" Value="{DynamicResource BwAccentBrush}"/>
+  </Style>
+  <Style Selector="TextBlock.brand">
+    <Setter Property="FontSize" Value="15"/>
+    <Setter Property="FontWeight" Value="ExtraBold"/>
+    <Setter Property="LetterSpacing" Value="0.5"/>
+  </Style>
+
+  <!-- panels -->
+  <Style Selector="Border.section">
+    <Setter Property="Background" Value="{DynamicResource BwSectionBrush}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource BwLineBrush}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="CornerRadius" Value="{DynamicResource BwRadius}"/>
+    <Setter Property="Padding" Value="14,12"/>
+  </Style>
+  <Style Selector="Border.bar">
+    <Setter Property="Background" Value="{DynamicResource BwBarBrush}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource BwLineBrush}"/>
+  </Style>
+  <Style Selector="Border.pill">
+    <Setter Property="Background" Value="{DynamicResource BwPanelBrush}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource BwLineBrush}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="CornerRadius" Value="{DynamicResource BwRadius}"/>
+    <Setter Property="Padding" Value="8,4"/>
+  </Style>
+  <Style Selector="Border.pill TextBlock">
+    <Setter Property="FontFamily" Value="{DynamicResource BwMonoFont}"/>
+    <Setter Property="FontSize" Value="11"/>
+    <Setter Property="Foreground" Value="{DynamicResource BwInkDimBrush}"/>
+  </Style>
+  <!-- a readout tile: label stamped above a mono value -->
+  <Style Selector="Border.readout">
+    <Setter Property="Background" Value="{DynamicResource BwPanelBrush}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource BwLineBrush}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="CornerRadius" Value="{DynamicResource BwRadius}"/>
+    <Setter Property="Padding" Value="10,7,10,8"/>
+  </Style>
+  <Style Selector="TextBlock.label">
+    <Setter Property="FontFamily" Value="{DynamicResource BwMonoFont}"/>
+    <Setter Property="FontSize" Value="9.5"/>
+    <Setter Property="FontWeight" Value="Bold"/>
+    <Setter Property="LetterSpacing" Value="1"/>
+    <Setter Property="Foreground" Value="{DynamicResource BwInkFaintBrush}"/>
+    <Setter Property="Margin" Value="0,0,0,3"/>
+  </Style>
+  <Style Selector="TextBlock.value">
+    <Setter Property="FontFamily" Value="{DynamicResource BwMonoFont}"/>
+    <Setter Property="FontSize" Value="13"/>
+    <Setter Property="FontWeight" Value="Medium"/>
+    <Setter Property="Foreground" Value="{DynamicResource BwInkBrush}"/>
+    <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+  </Style>
+  <Style Selector="Separator">
+    <Setter Property="Background" Value="{DynamicResource BwLineBrush}"/>
+    <Setter Property="Height" Value="1"/>
+    <Setter Property="Margin" Value="0,4"/>
+  </Style>
+
+  <!-- buttons: BMWeb's .btn, and .btn.primary as the accent fill -->
+  <Style Selector="Button">
+    <Setter Property="Background" Value="{DynamicResource BwRaisedBrush}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource BwLineBrightBrush}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="CornerRadius" Value="{DynamicResource BwRadius}"/>
+    <Setter Property="Foreground" Value="{DynamicResource BwInkBrush}"/>
+    <Setter Property="FontWeight" Value="Bold"/>
+    <Setter Property="FontSize" Value="12.5"/>
+    <Setter Property="Padding" Value="12,7"/>
+    <Setter Property="HorizontalContentAlignment" Value="Center"/>
+    <Setter Property="VerticalContentAlignment" Value="Center"/>
+  </Style>
+  <Style Selector="Button:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource BwRaisedBrush}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource BwAccentBrush}"/>
+    <Setter Property="Foreground" Value="{DynamicResource BwInkBrush}"/>
+  </Style>
+  <Style Selector="Button:pressed /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource BwPanel2Brush}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource BwAccentBrush}"/>
+    <Setter Property="Foreground" Value="{DynamicResource BwInkBrush}"/>
+  </Style>
+  <Style Selector="Button:disabled /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource BwPanelBrush}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource BwLineBrush}"/>
+    <Setter Property="Foreground" Value="{DynamicResource BwInkFaintBrush}"/>
+  </Style>
+  <Style Selector="Button.primary">
+    <Setter Property="Background" Value="{DynamicResource BwPrimaryBrush}"/>
+    <Setter Property="BorderBrush" Value="Transparent"/>
+    <Setter Property="Foreground" Value="{DynamicResource BwAccentInkBrush}"/>
+  </Style>
+  <Style Selector="Button.primary:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource BwPrimaryBrush}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource BwAccentBrush}"/>
+    <Setter Property="Foreground" Value="{DynamicResource BwAccentInkBrush}"/>
+  </Style>
+  <Style Selector="Button.primary:pressed /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource BwAccentSoftBrush}"/>
+    <Setter Property="Foreground" Value="{DynamicResource BwAccentInkBrush}"/>
+  </Style>
+  <Style Selector="Button.danger:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="BorderBrush" Value="{DynamicResource BwRedBrush}"/>
+  </Style>
+  <!-- an F-key style chip: mono, small, on the key background -->
+  <Style Selector="Button.key">
+    <Setter Property="Background" Value="{DynamicResource BwKeyBgBrush}"/>
+    <Setter Property="FontFamily" Value="{DynamicResource BwMonoFont}"/>
+    <Setter Property="FontSize" Value="11"/>
+    <Setter Property="Padding" Value="9,5"/>
+    <Setter Property="Foreground" Value="{DynamicResource BwAccentBrush}"/>
+  </Style>
+  <Style Selector="Button.key:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource BwKeyBgBrush}"/>
+    <Setter Property="Foreground" Value="{DynamicResource BwAccentBrush}"/>
+  </Style>
+
+  <!-- combo boxes -->
+  <Style Selector="ComboBox">
+    <Setter Property="Background" Value="{DynamicResource BwPanelBrush}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource BwLineBrightBrush}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="CornerRadius" Value="{DynamicResource BwRadius}"/>
+    <Setter Property="Foreground" Value="{DynamicResource BwInkBrush}"/>
+    <Setter Property="PlaceholderForeground" Value="{DynamicResource BwInkDimBrush}"/>
+    <Setter Property="FontWeight" Value="SemiBold"/>
+    <Setter Property="FontSize" Value="12.5"/>
+    <Setter Property="Padding" Value="10,6"/>
+    <Setter Property="MinHeight" Value="32"/>
+  </Style>
+  <Style Selector="ComboBox:pointerover /template/ Border#Background">
+    <Setter Property="Background" Value="{DynamicResource BwPanelBrush}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource BwAccentBrush}"/>
+  </Style>
+  <Style Selector="ComboBox:focus /template/ Border#Background">
+    <Setter Property="BorderBrush" Value="{DynamicResource BwAccentBrush}"/>
+  </Style>
+  <Style Selector="ComboBox /template/ PathIcon#DropDownGlyph">
+    <Setter Property="Foreground" Value="{DynamicResource BwInkDimBrush}"/>
+  </Style>
+  <Style Selector="ComboBoxItem">
+    <Setter Property="Foreground" Value="{DynamicResource BwInkBrush}"/>
+    <Setter Property="FontSize" Value="12.5"/>
+  </Style>
+
+  <!-- check boxes and radio buttons: BMWeb draws its own, a ring or a rounded
+       square on the panel colour, the accent when set -->
+  <Style Selector="CheckBox">
+    <Setter Property="Foreground" Value="{DynamicResource BwInkBrush}"/>
+    <Setter Property="FontSize" Value="12.5"/>
+    <Setter Property="MinHeight" Value="26"/>
+  </Style>
+  <Style Selector="CheckBox /template/ Border#NormalRectangle">
+    <Setter Property="Background" Value="{DynamicResource BwPanelBrush}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource BwInkFaintBrush}"/>
+    <Setter Property="BorderThickness" Value="1.5"/>
+    <Setter Property="CornerRadius" Value="{DynamicResource BwRadius}"/>
+  </Style>
+  <Style Selector="CheckBox:pointerover /template/ Border#NormalRectangle">
+    <Setter Property="BorderBrush" Value="{DynamicResource BwInkDimBrush}"/>
+  </Style>
+  <Style Selector="CheckBox:checked /template/ Border#NormalRectangle">
+    <Setter Property="Background" Value="{DynamicResource BwAccentBrush}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource BwAccentBrush}"/>
+  </Style>
+  <Style Selector="CheckBox:checked /template/ Path#CheckGlyph">
+    <Setter Property="Fill" Value="{DynamicResource BwAccentInkBrush}"/>
+  </Style>
+  <Style Selector="CheckBox:checked /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Foreground" Value="{DynamicResource BwInkBrush}"/>
+  </Style>
+  <Style Selector="CheckBox:disabled">
+    <Setter Property="Opacity" Value="0.45"/>
+  </Style>
+
+  <Style Selector="RadioButton">
+    <Setter Property="Foreground" Value="{DynamicResource BwInkBrush}"/>
+    <Setter Property="FontSize" Value="12.5"/>
+    <Setter Property="MinHeight" Value="26"/>
+  </Style>
+  <Style Selector="RadioButton /template/ Ellipse#OuterEllipse">
+    <Setter Property="Fill" Value="{DynamicResource BwPanelBrush}"/>
+    <Setter Property="Stroke" Value="{DynamicResource BwInkFaintBrush}"/>
+    <Setter Property="StrokeThickness" Value="1.5"/>
+  </Style>
+  <Style Selector="RadioButton:pointerover /template/ Ellipse#OuterEllipse">
+    <Setter Property="Stroke" Value="{DynamicResource BwInkDimBrush}"/>
+  </Style>
+  <Style Selector="RadioButton:checked /template/ Ellipse#CheckOuterEllipse">
+    <Setter Property="Fill" Value="{DynamicResource BwPanelBrush}"/>
+    <Setter Property="Stroke" Value="{DynamicResource BwAccentBrush}"/>
+    <Setter Property="StrokeThickness" Value="1.5"/>
+  </Style>
+  <Style Selector="RadioButton:checked /template/ Ellipse#CheckGlyph">
+    <Setter Property="Fill" Value="{DynamicResource BwAccentBrush}"/>
+  </Style>
+  <Style Selector="RadioButton:checked /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Foreground" Value="{DynamicResource BwInkBrush}"/>
+  </Style>
+
+  <!-- the rail down the left, like MS4X Flasher's: one glyph per screen -->
+  <Style Selector="Button.rail">
+    <Setter Property="Width" Value="40"/>
+    <Setter Property="Height" Value="40"/>
+    <Setter Property="Padding" Value="0"/>
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="BorderBrush" Value="Transparent"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="CornerRadius" Value="{DynamicResource BwRadius}"/>
+    <Setter Property="FontSize" Value="18"/>
+    <Setter Property="FontWeight" Value="Normal"/>
+    <Setter Property="Foreground" Value="{DynamicResource BwInkDimBrush}"/>
+  </Style>
+  <Style Selector="Button.rail:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource BwRaisedBrush}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource BwLineBrush}"/>
+    <Setter Property="Foreground" Value="{DynamicResource BwInkBrush}"/>
+  </Style>
+  <Style Selector="Button.rail.current">
+    <Setter Property="Background" Value="{DynamicResource BwAccentGlowBrush}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource BwAccentBrush}"/>
+    <Setter Property="Foreground" Value="{DynamicResource BwAccentBrush}"/>
+  </Style>
+  <Style Selector="Button.rail.current:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource BwAccentGlowBrush}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource BwAccentBrush}"/>
+    <Setter Property="Foreground" Value="{DynamicResource BwAccentBrush}"/>
+  </Style>
+  <Style Selector="Button.rail:disabled /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="BorderBrush" Value="Transparent"/>
+    <Setter Property="Foreground" Value="{DynamicResource BwInkFaintBrush}"/>
+  </Style>
+
+  <!-- the ECU box in the top bar -->
+  <Style Selector="Border.ecu">
+    <Setter Property="Background" Value="{DynamicResource BwPanelBrush}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource BwLineBrightBrush}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="CornerRadius" Value="{DynamicResource BwRadius}"/>
+    <Setter Property="Padding" Value="12,0"/>
+    <Setter Property="Height" Value="32"/>
+  </Style>
+
+  <!-- the log: the status lines as they came, mono -->
+  <Style Selector="Border.log">
+    <Setter Property="Background" Value="{DynamicResource BwKeyBgBrush}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource BwLineBrush}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="CornerRadius" Value="{DynamicResource BwRadius}"/>
+    <Setter Property="Padding" Value="10,6"/>
+  </Style>
+
+  <!-- the screens are chosen from the rail, so the tab strip itself is hidden -->
+  <Style Selector="TabControl.rail /template/ ItemsPresenter#PART_ItemsPresenter">
+    <Setter Property="IsVisible" Value="False"/>
+  </Style>
+
+  <!-- tabs as the top bar's nav pills -->
+  <Style Selector="TabControl">
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="Padding" Value="0"/>
+  </Style>
+  <Style Selector="TabItem">
+    <Setter Property="FontSize" Value="12.5"/>
+    <Setter Property="FontWeight" Value="Bold"/>
+    <Setter Property="Foreground" Value="{DynamicResource BwInkDimBrush}"/>
+    <Setter Property="Background" Value="{DynamicResource BwPanelBrush}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource BwLineBrush}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="CornerRadius" Value="{DynamicResource BwRadius}"/>
+    <Setter Property="Padding" Value="14,0"/>
+    <Setter Property="MinHeight" Value="30"/>
+    <Setter Property="Margin" Value="0,0,6,10"/>
+  </Style>
+  <Style Selector="TabItem:pointerover /template/ Border#PART_LayoutRoot">
+    <Setter Property="BorderBrush" Value="{DynamicResource BwAccentBrush}"/>
+  </Style>
+  <Style Selector="TabItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Foreground" Value="{DynamicResource BwInkBrush}"/>
+  </Style>
+  <Style Selector="TabItem:selected">
+    <Setter Property="Foreground" Value="{DynamicResource BwInkBrush}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource BwAccentBrush}"/>
+    <Setter Property="Background" Value="{DynamicResource BwRaisedBrush}"/>
+  </Style>
+  <Style Selector="TabItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Foreground" Value="{DynamicResource BwInkBrush}"/>
+  </Style>
+  <Style Selector="TabItem:disabled">
+    <Setter Property="Opacity" Value="0.45"/>
+  </Style>
+  <!-- no selection pipe: the border carries the selection -->
+  <Style Selector="TabItem /template/ :is(Control)#PART_SelectedPipe">
+    <Setter Property="IsVisible" Value="False"/>
+    <Setter Property="Opacity" Value="0"/>
+  </Style>
+  <Style Selector="TabItem:selected /template/ :is(Control)#PART_SelectedPipe">
+    <Setter Property="IsVisible" Value="False"/>
+    <Setter Property="Opacity" Value="0"/>
+  </Style>
+
+  <!-- the progress bar as a gauge: accent fill on the key background,
+       red while a module is being written -->
+  <Style Selector="ProgressBar">
+    <Setter Property="Foreground" Value="{DynamicResource BwAccentBrush}"/>
+    <Setter Property="Background" Value="{DynamicResource BwKeyBgBrush}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource BwLineBrush}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="CornerRadius" Value="{DynamicResource BwRadius}"/>
+    <Setter Property="MinHeight" Value="12"/>
+  </Style>
+  <Style Selector="ProgressBar.flashing">
+    <Setter Property="Foreground" Value="{DynamicResource BwRedBrush}"/>
+  </Style>
+
+  <!-- tool tips, the fault grid -->
+  <Style Selector="ToolTip">
+    <Setter Property="Background" Value="{DynamicResource BwPanelBrush}"/>
+    <Setter Property="Foreground" Value="{DynamicResource BwInkBrush}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource BwLineBrush}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="CornerRadius" Value="{DynamicResource BwRadius}"/>
+    <Setter Property="FontSize" Value="12"/>
+    <Setter Property="MaxWidth" Value="380"/>
+  </Style>
+  <Style Selector="DataGrid">
+    <Setter Property="Background" Value="{DynamicResource BwPanelBrush}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource BwLineBrush}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="HorizontalGridLinesBrush" Value="{DynamicResource BwLineBrush}"/>
+    <Setter Property="FontFamily" Value="{DynamicResource BwMonoFont}"/>
+    <Setter Property="FontSize" Value="12"/>
+    <Setter Property="RowBackground" Value="{DynamicResource BwPanelBrush}"/>
+  </Style>
+  <Style Selector="DataGridColumnHeader">
+    <Setter Property="Background" Value="{DynamicResource BwPanel2Brush}"/>
+    <Setter Property="Foreground" Value="{DynamicResource BwInkDimBrush}"/>
+    <Setter Property="FontWeight" Value="Bold"/>
+    <Setter Property="FontSize" Value="11"/>
+  </Style>
+  <Style Selector="DataGridRow">
+    <Setter Property="Foreground" Value="{DynamicResource BwInkBrush}"/>
+  </Style>
+  <Style Selector="DataGridCell">
+    <Setter Property="Foreground" Value="{DynamicResource BwInkBrush}"/>
+  </Style>
+</Styles>

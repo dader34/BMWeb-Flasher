@@ -83,6 +83,8 @@ namespace BmwebFlasher.Tests
             for (int i = 0; i < LookupEntries.Length; i++)
                 Put32(mpc, LookupEntries[i], LookupStock[i]);
             Put32(mpc, 0x4B6C4, 0xB06DC4D8);
+            Put32(mpc, 0x4BB78, 0x980DC4FB);
+            Put32(mpc, 0x4BBA4, 0x900DC4F8);
             Put32(mpc, NvDescriptor + 0, 0xFFFCA0F8);
             Put32(mpc, NvDescriptor + 4, 0xFFFCA104);
             Put32(mpc, NvDescriptor + 8, 0xFFFCA110);
@@ -117,6 +119,8 @@ namespace BmwebFlasher.Tests
             Assert.Equal(0x28007FF2u, MapSwitch.Cmplwi(0, 0x7FF2));
             Assert.Equal(0x3C63000Au, MapSwitch.Addis(3, 3, 0xA));
             Assert.Equal(0xB06DC4D8u, MapSwitch.Sth(3, -0x3B28, 13));
+            Assert.Equal(0x980DC4FBu, MapSwitch.Stb(0, -0x3B05, 13));
+            Assert.Equal(0x900DC4F8u, MapSwitch.Stw(0, -0x3B08, 13));
             Assert.Equal(0x38601900u, MapSwitch.Li(3, 0x1900));
             Assert.Equal(0x48061588u, MapSwitch.Branch(0xCFC8, 0x6E550, false));
             Assert.Equal(0x4BF9EA5Cu, MapSwitch.Branch(0x6E570, 0xCFCC, false));
@@ -156,6 +160,8 @@ namespace BmwebFlasher.Tests
                 foreach (int entry in LookupEntries)
                     allowed |= i >= entry && i < entry + 4;
                 allowed |= i >= 0x4B6C4 && i < 0x4B6C8;
+                allowed |= i >= 0x4BB78 && i < 0x4BB7C;
+                allowed |= i >= 0x4BBA4 && i < 0x4BBA8;
                 allowed |= i >= NvDescriptor && i < NvDescriptor + 12;
                 if (!allowed)
                     Assert.True(mpc[i] == r.Mpc[i], "MPC changed at 0x" + i.ToString("X"));
@@ -534,6 +540,105 @@ namespace BmwebFlasher.Tests
             Assert.Equal(2, MapSwitch.DscPressWindowSeconds);
             Assert.Contains(MapSwitch.Li(10, 200), tach);
             Assert.DoesNotContain(MapSwitch.Cmplwi(12, 500), tach);
+
+            // It works while driving: the vehicle speed is never looked at, and
+            // the engine speed only to choose the indication (tach or lamp).
+            Assert.DoesNotContain(MapSwitch.Lbz(12, -0x3F95, 13), tach);
+        }
+
+        [Fact]
+        public void TheDrivingDscBuildBlinksTheLampAndKeepsTheTachForEngineOff()
+        {
+            var (flash, mpc) = SyntheticPair();
+            MapSwitch.Result r = MapSwitch.Build(flash, mpc, null, null);
+
+            // The lamp store in the 0x545 builder is hooked, into the patch
+            // area; the old gauge site is left stock.
+            uint hook = Get32(r.Mpc, 0x4BB78);
+            Assert.Equal(0x48000001u, hook & 0xFC000003);
+            uint stub = 0x4BB78 + (hook & 0x03FFFFFC);
+            Assert.InRange(stub, (uint)CodeStart, (uint)(CodeStart + r.CodeBytes - 4));
+            Assert.Equal(0x980DC4FBu, Get32(r.Mpc, (int)stub));          // the displaced store runs first
+            Assert.Equal(0x900DC4F8u, Get32(r.Mpc, 0x4BBA4));
+
+            // The stub sets and clears the check-engine bit for 500 ms of
+            // every second, counting the phase in r12 ("addi r0,r0,1" is
+            // li r0,1 and would never advance it).
+            uint[] code = PatchCode(r.Mpc);
+            Assert.Contains(MapSwitch.Ori(0, 0, 2), code);
+            Assert.Contains(MapSwitch.Rlwinm(0, 0, 0, 31, 29), code);
+            Assert.Contains(MapSwitch.Cmplwi(12, 50), code);
+            Assert.Contains(MapSwitch.Cmplwi(12, 100), code);
+            Assert.Contains(MapSwitch.Addi(12, 12, 1), code);
+            Assert.DoesNotContain(MapSwitch.Li(0, 1), code);
+            Assert.DoesNotContain(MapSwitch.Lhz(0, -0x5CDE, 13), code);     // no fuel counter business
+
+            // The tach routine looks at the engine speed only to choose the
+            // indication (tach stopped, lamp running), never as a guard.
+            uint[] tach = TachRoutine(r.Mpc);
+            Assert.Equal(2, Array.FindAll(tach, w => w == MapSwitch.Lhz(12, -0x4BEC, 13)).Length);
+            Assert.Contains(MapSwitch.Stb(12, (int)MapSwitch.RamBlinks - 0x4017F0, 13), tach);
+            Assert.Contains(MapSwitch.Li(3, MapSwitch.Tach1000), tach);
+            Assert.Contains(MapSwitch.Li(3, MapSwitch.Tach2000), tach);
+
+            // The pedal build and the earlier DSC builds leave the lamp site stock.
+            Assert.Equal(0x980DC4FBu, Get32(MapSwitch.Build(flash, mpc, null, null, MapSwitch.Trigger.Pedals).Mpc, 0x4BB78));
+            var stopped = new MapSwitch.Version(MapSwitch.Trigger.DscButton, MapSwitch.StartupIndication.ImmediateLong,
+                MapSwitch.DscWatch.Car, MapSwitch.Scope.FullTune, 4);
+            Assert.Equal(0x980DC4FBu, Get32(MapSwitch.Build(flash, mpc, null, null, stopped).Mpc, 0x4BB78));
+
+            // Builds that are not reproduced any more (the gauge generations,
+            // the first lamp build) are still recognised as earlier builds
+            // when their hook sites branch into the patch area and the code
+            // starts with the lookup stubs, and are updated with both sites
+            // put back to stock.
+            byte[] gaugeMpc = (byte[])r.Mpc.Clone();
+            Put32(gaugeMpc, 0x4BB78, 0x980DC4FB);
+            Put32(gaugeMpc, 0x4BBA4, 0x48000001u | (uint)(CodeStart + 0x400 - 0x4BBA4));
+            for (int i = CodeStart + 0x300; i < CodeStart + 0x420; i++)
+                gaugeMpc[i] ^= 0x5A;
+            Assert.True(MapSwitch.IsAlreadyPatched(gaugeMpc));
+            Assert.False(MapSwitch.IsCurrentVersion(gaugeMpc));
+            Assert.Null(MapSwitch.InstalledTrigger(gaugeMpc));
+            Assert.Null(MapSwitch.BlockedReason(flash, gaugeMpc));
+            byte[] gaugeArea = new byte[MapSwitch.CarCheckLength];
+            Array.Copy(gaugeMpc, MapSwitch.CarCheckOffset, gaugeArea, 0, gaugeArea.Length);
+            Assert.Equal(MapSwitch.CarState.Earlier, MapSwitch.StateOnCar(gaugeArea));
+            MapSwitch.Result updated = MapSwitch.Build(r.Flash, gaugeMpc, null, null);
+            Assert.True(updated.WasUpdated);
+            Assert.Contains(updated.Log, l => l.Contains("earlier build"));
+            Assert.Equal(r.Mpc, updated.Mpc);
+
+            // Something else in the free area is not ours.
+            byte[] other = (byte[])gaugeMpc.Clone();
+            other[CodeStart + 4] ^= 0xFF;
+            Assert.False(MapSwitch.IsAlreadyPatched(other));
+            Assert.NotNull(MapSwitch.BlockedReason(flash, other));
+
+            // A modified site is refused.
+            var (flash2, mpc2) = SyntheticPair();
+            Put32(mpc2, 0x4BBA4, 0x60000000);
+            Assert.NotNull(MapSwitch.BlockedReason(flash2, mpc2));
+        }
+
+        [Fact]
+        public void TheEngineStoppedDscBuildsAreRecognisedAsEarlier()
+        {
+            var (flash, mpc) = SyntheticPair();
+            foreach (int presses in new[] { 4, 2 })
+            {
+                var stopped = new MapSwitch.Version(MapSwitch.Trigger.DscButton, MapSwitch.StartupIndication.ImmediateLong,
+                    MapSwitch.DscWatch.Car, MapSwitch.Scope.FullTune, presses);
+                MapSwitch.Result old = MapSwitch.Build(flash, mpc, null, null, stopped);
+                uint[] tach = TachRoutine(old.Mpc);
+                Assert.Contains(MapSwitch.Lhz(12, -0x4BEC, 13), tach);
+                Assert.True(MapSwitch.IsAlreadyPatched(old.Mpc));
+                Assert.False(MapSwitch.IsCurrentVersion(old.Mpc));
+
+                MapSwitch.Result updated = MapSwitch.Build(old.Flash, old.Mpc, null, null, MapSwitch.Trigger.DscButton, presses);
+                Assert.True(updated.WasUpdated);
+                Assert.True(MapSwitch.IsCurrentVersion(updated.Mpc));
+            }
         }
 
         [Fact]
@@ -606,13 +711,14 @@ namespace BmwebFlasher.Tests
 
             Assert.Equal(3, MapSwitch.StartupDisplaySeconds);
 
-            // Both power-up routines load 300 into the display countdown,
-            // which is 16 bits wide here: 300 does not fit in a byte.
-            Assert.Equal(2, PowerUpLoads(image, 300));
+            // Only the restore loads 300 into the display countdown (16 bits
+            // wide: 300 does not fit in a byte); the defaults do not, so a
+            // car on map 2 never shows map 1 first.
+            Assert.Equal(1, PowerUpLoads(image, 300));
             Assert.Equal(0, PowerUpLoads(image, 150));
             Assert.Equal(0, PowerUpLoads(image, 600));
 
-            uint init = Get32(image, NvDescriptor), save = Get32(image, NvDescriptor + 8);
+            uint save = Get32(image, NvDescriptor + 8);
             int wideStores = 0, byteStores = 0;
             uint sth12 = MapSwitch.Sth(12, (int)MapSwitch.RamWideDisplayCounter - 0x4017F0, 13);
             uint sth11 = MapSwitch.Sth(11, (int)MapSwitch.RamWideDisplayCounter - 0x4017F0, 13);
@@ -625,14 +731,28 @@ namespace BmwebFlasher.Tests
                 if (w == stb12 || w == stb11) byteStores++;
             }
 
-            // Gesture, countdown and engine-running in the tach routine,
-            // then the two power-up routines. The byte at the old display
-            // counter's address now counts DSC presses: a press, the toggle,
-            // the window running out and engine-running in the tach routine,
-            // then the two power-up routines.
-            Assert.Equal(5, wideStores);
+            // Gesture and countdown in the tach routine (no engine-running
+            // branch: the DSC trigger works while driving), then the restore.
+            // The byte at the old display counter's address now counts DSC
+            // presses: a press, the toggle and the window running out in the
+            // tach routine, then the two power-up routines.
+            Assert.Equal(3, wideStores);
             Assert.Equal(MapSwitch.RamDisplayCounter, MapSwitch.RamPressCounter);
-            Assert.Equal(6, byteStores);
+            Assert.Equal(5, byteStores);
+
+            // DSC state changes are not counted for 10 s after ignition-on:
+            // both power-up routines load the lockout, the gesture counts it
+            // down and follows the state meanwhile.
+            Assert.Equal(10, MapSwitch.StartupLockoutSeconds);
+            Assert.Equal(2, PowerUpLoads(image, 1000));
+            int locked = (int)MapSwitch.RamStartupLockout - 0x4017F0;
+            uint[] tach = TachRoutine(image);
+            Assert.Contains(MapSwitch.Lhz(10, locked, 13), tach);
+            Assert.Contains(MapSwitch.Sth(10, locked, 13), tach);
+            Assert.Contains(MapSwitch.Addi(10, 10, -1), tach);
+            // The pedal build has no lockout (nothing to count).
+            byte[] pedals = MapSwitch.Build(flash, mpc, null, null, MapSwitch.Trigger.Pedals).Mpc;
+            Assert.Equal(0, PowerUpLoads(pedals, 1000));
         }
 
         [Fact]

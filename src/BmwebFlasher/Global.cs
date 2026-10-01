@@ -27,6 +27,18 @@ namespace BmwebFlasher
 
         public string Sgbd { get; set; } = "D_MOTOR.GRP";
 
+        /// <summary>The skin, by BMWeb's id ("instrument", "inpa", ...), see <see cref="Skins"/>.</summary>
+        public string Theme { get; set; } = Skins.DefaultId;
+
+        /// <summary>
+        /// Keep a copy of every image written to a module, in the app's
+        /// folder, so a history entry can open exactly what went on the car.
+        /// </summary>
+        public bool KeepFlashedFiles { get; set; } = false;
+
+        /// <summary>Append a programming-log (AIF) entry to a module after every flash, as WinKFP does.</summary>
+        public bool WriteAif { get; set; } = true;
+
         private static string DefaultPort() => Ports.AutoDetect() ?? string.Empty;
     }
 
@@ -173,6 +185,24 @@ namespace BmwebFlasher
         {
             get => Settings.Port;
             set { Settings.Port = value; Save(); }
+        }
+
+        public static string Theme
+        {
+            get => Settings.Theme;
+            set { Settings.Theme = value; Save(); }
+        }
+
+        public static bool KeepFlashedFiles
+        {
+            get => Settings.KeepFlashedFiles;
+            set { Settings.KeepFlashedFiles = value; Save(); }
+        }
+
+        public static bool WriteAif
+        {
+            get => Settings.WriteAif;
+            set { Settings.WriteAif = value; Save(); }
         }
 
         private static Settings Load()

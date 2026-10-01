@@ -73,7 +73,7 @@ namespace BmwebFlasher.Tests
                         var s = SectorOf(address);
                         for (int i = 0; i < s.Len; i++) Flash[M2F(s.Start) + i] = 0xFF;
                         Erased.Add(s.Start);
-                        return Ok();
+                        return OkWithSub(1);
                     }
                     case 0x02:      // program
                     {
@@ -84,7 +84,7 @@ namespace BmwebFlasher.Tests
                             // NOR flash can only clear bits: a write ANDs.
                             Flash[M2F(address) + i] &= telegram[8 + i];
                         }
-                        return Ok();
+                        return OkWithSub(1);
                     }
                     case 0x0F:      // status
                         return OkWithSub(1);

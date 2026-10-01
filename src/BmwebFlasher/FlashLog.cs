@@ -23,6 +23,19 @@ namespace BmwebFlasher
         private static StreamWriter _writer;
         private static string _path;
 
+        // What the history keeps of a session: when it began, what it was,
+        // its first note (the module and options) and the last status line.
+        private static DateTime _started;
+        private static string _operation, _firstNote, _lastStatus;
+        // The outcome so far: "ok" once a success line was seen, "failed"
+        // once a failure was, "ended" otherwise. Judged as the statuses
+        // arrive rather than from the last one, because the re-identify
+        // after a flash reports neutral lines ("Programming status: ...")
+        // that used to turn a finished flash into "ended".
+        private static string _result;
+        // The folder the session's written images were copied to, if any.
+        private static string _filesDir;
+
         /// <summary>Directory where session logs are written.</summary>
         public static string LogDir => Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -42,6 +55,12 @@ namespace BmwebFlasher
             lock (Gate)
             {
                 Stop();
+                _started = DateTime.Now;
+                _operation = operation;
+                _firstNote = null;
+                _lastStatus = null;
+                _result = "ended";
+                _filesDir = null;
                 try
                 {
                     Directory.CreateDirectory(LogDir);
@@ -66,6 +85,7 @@ namespace BmwebFlasher
 
         public static void Stop()
         {
+            FlashHistory.Entry entry = null;
             lock (Gate)
             {
                 if (_writer == null) return;
@@ -77,9 +97,25 @@ namespace BmwebFlasher
                     _writer.Dispose();
                 }
                 catch (Exception) { }
+
+                entry = new FlashHistory.Entry
+                {
+                    Started = _started,
+                    Seconds = Math.Round((DateTime.Now - _started).TotalSeconds, 1),
+                    Operation = _operation,
+                    Vin = Global.VIN,
+                    Module = Global.HW_Ref,
+                    Details = _firstNote,
+                    Status = _lastStatus,
+                    Result = _result,
+                    Log = _path,
+                    Files = _filesDir,
+                };
                 _writer = null;
                 _path = null;
             }
+            // Outside the lock: the history raises an event the window listens to.
+            FlashHistory.Append(entry);
         }
 
         /// <summary>Free-text note (a phase marker, an error, a decision).</summary>
@@ -88,8 +124,60 @@ namespace BmwebFlasher
             lock (Gate)
             {
                 if (_writer == null) return;
+                if (_firstNote == null) _firstNote = text;
                 try { _writer.WriteLine(Stamp() + text); }
                 catch (Exception) { }
+            }
+        }
+
+        /// <summary>
+        /// Keeps a copy of an image the session is about to write, when the
+        /// setting is on: in a folder of its own under the app's "flashed"
+        /// folder, named after the session, which the history entry then
+        /// points at. Best effort, like the log.
+        /// </summary>
+        public static void Attach(string fileName, byte[] data)
+        {
+            if (data == null || !Global.KeepFlashedFiles) return;
+            lock (Gate)
+            {
+                if (_writer == null) return;
+                try
+                {
+                    if (_filesDir == null)
+                    {
+                        _filesDir = Path.Combine(FlashHistory.FlashedDir,
+                            _started.ToString("yyyyMMdd-HHmmss") + "_" + Sanitize(_operation) +
+                            (string.IsNullOrEmpty(Global.VIN) ? string.Empty : "_" + Sanitize(Global.VIN)));
+                        Directory.CreateDirectory(_filesDir);
+                    }
+                    string path = Path.Combine(_filesDir, fileName);
+                    File.WriteAllBytes(path, data);
+                    _writer.WriteLine(Stamp() + "copy of the image written: " + path);
+                }
+                catch (Exception ex)
+                {
+                    try { _writer.WriteLine(Stamp() + "could not keep a copy of " + fileName + ": " + ex.Message); }
+                    catch (Exception) { }
+                }
+            }
+        }
+
+        /// <summary>
+        /// The status line the app shows, kept as the session's outcome. Every
+        /// flash path reports how it ended this way, so the history needs no
+        /// call of its own at each of them.
+        /// </summary>
+        public static void Status(string text)
+        {
+            lock (Gate)
+            {
+                if (_writer == null || string.IsNullOrEmpty(text)) return;
+                if (text.StartsWith("Logging to ")) return;
+                _lastStatus = text;
+                string judged = FlashHistory.Judge(text);
+                if (judged == "failed") _result = "failed";
+                else if (judged == "ok" && _result != "failed") _result = "ok";
             }
         }
 

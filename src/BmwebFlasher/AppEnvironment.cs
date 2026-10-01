@@ -25,7 +25,17 @@ namespace BmwebFlasher
 
         private static readonly Lazy<bool> Development = new Lazy<bool>(Detect);
 
-        public static bool IsDevelopment => Development.Value;
+        /// <summary>What the .env / variable says: a development build or not.</summary>
+        public static bool IsDevelopmentBuild => Development.Value;
+
+        /// <summary>
+        /// Whether the development-only controls are shown. A development
+        /// build can switch this off from Settings to see the app as an end
+        /// user does; a production build can never switch it on.
+        /// </summary>
+        public static bool DevelopmentUi { get; set; } = true;
+
+        public static bool IsDevelopment => Development.Value && DevelopmentUi;
 
         private static bool Detect()
         {

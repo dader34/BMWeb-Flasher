@@ -79,13 +79,13 @@ namespace BmwebFlasher
         private byte[] ReadCarBytes(EdiabasNet ediabas, uint start, uint end, string segment = "ROMX")
         {
             int wanted = (int)(end - start + 1);
-            byte[] data = ReadMemory(ediabas, start, end, segment);
+            byte[] data = ReadMemory(ediabas, start, end, segment, showProgress: false);
 
             // Outside BMW-FAST a memory read needs security access first, as
             // Read DME does. Only asked for if the plain read did not work.
             if ((data == null || data.Length != wanted) && Global.diagProtocol != "BMW-FAST" &&
                 RequestSecurityAccess(ediabas))
-                data = ReadMemory(ediabas, start, end, segment);
+                data = ReadMemory(ediabas, start, end, segment, showProgress: false);
 
             return data != null && data.Length == wanted ? data : null;
         }

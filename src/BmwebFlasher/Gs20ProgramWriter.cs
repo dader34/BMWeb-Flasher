@@ -157,8 +157,37 @@ namespace BmwebFlasher
                     "programming. Nothing was erased. Reply: " + Ds2Telegram.ToHex(reply, 12));
         }
 
-        private void Erase(int address, CancellationToken cancel) =>
-            Exchange(AddressCommand(0x06, address), EraseTimeoutMs, "erase", cancel);
+        /// <summary>The flash status sub-code for a region (1 = valid, 0x0B = blank, 0x0E = written but not accepted).</summary>
+        public byte? ReadStatus(int address, CancellationToken cancel = default)
+        {
+            for (int poll = 0; poll < MaxBusyPolls; poll++)
+            {
+                cancel.ThrowIfCancellationRequested();
+                byte[] reply = Exchange(AddressCommand(0x0F, address), EraseTimeoutMs, "status", cancel, allowBusy: true);
+                if (Ds2Telegram.Status(reply) == Ds2Telegram.StatusBusy)
+                {
+                    Thread.Sleep(BusyPollDelayMs);
+                    continue;
+                }
+                return Ds2Telegram.SubStatus(reply);
+            }
+            throw new TimeoutException("The transmission stayed busy on a status request.");
+        }
+
+        private void Erase(int address, CancellationToken cancel)
+        {
+            byte[] reply = Exchange(AddressCommand(0x06, address), EraseTimeoutMs, "erase", cancel);
+            // The module answers status OK to an erase it has refused as
+            // well as to one it has done; only the sub-status tells them
+            // apart (1 = erased, seen with the 3 s the erase takes; 8 came
+            // back in 16 ms from a module that then rejected every write).
+            byte? sub = Ds2Telegram.SubStatus(reply);
+            if (sub != 1)
+                throw new InvalidOperationException(
+                    "The transmission did not erase 0x" + address.ToString("X6") + ": " +
+                    (sub.HasValue ? Ds2Telegram.DescribeSubStatus(sub.Value) : "no sub-status") +
+                    " (" + Ds2Telegram.ToHex(reply, 12) + ")");
+        }
 
         /// <summary>
         /// The closing status request. Unlike the polls during the erase, this
@@ -280,6 +309,17 @@ namespace BmwebFlasher
                 throw new InvalidOperationException(
                     "The transmission refused a write at 0x" + address.ToString("X6") +
                     ": " + Ds2Telegram.ToHex(reply, 12));
+            // An accepted chunk is answered with the next address and
+            // sub-status 1. A chunk the module did not program (unerased
+            // flash) is answered with the same address and sub-status 3,
+            // still under status OK, so the sub-status has to be checked
+            // or a whole image "writes" into flash that never changed.
+            byte? sub = Ds2Telegram.SubStatus(reply);
+            if (sub != 1)
+                throw new InvalidOperationException(
+                    "The transmission did not program the chunk at 0x" + address.ToString("X6") + ": " +
+                    (sub.HasValue ? Ds2Telegram.DescribeSubStatus(sub.Value) : "no sub-status") +
+                    " (" + Ds2Telegram.ToHex(reply, 12) + ")");
         }
 
         private byte[] Exchange(byte[] payload, int timeoutMs, string what,
@@ -309,7 +349,28 @@ namespace BmwebFlasher
                 catch (Exception ex) when (!(ex is OperationCanceledException))
                 {
                     last = ex;
-                    if (attempt + 1 < Retries) Thread.Sleep(RetryDelayMs);
+                    // The failed exchange itself never reaches the log (the
+                    // link only traces completed ones), so note it here with
+                    // the request, or a log shows a write stopping dead.
+                    _note("no reply to " + what + " (attempt " + (attempt + 1) + " of " + Retries + "): " +
+                                  Ds2Telegram.ToHex(telegram, 12) + " - " + ex.Message);
+                    if (attempt + 1 < Retries)
+                    {
+                        Thread.Sleep(RetryDelayMs);
+                        // Re-sync before the retry: a plain ident proves the
+                        // module still answers and clears whatever half-read
+                        // state the lost reply left on either side.
+                        try
+                        {
+                            _link.Transfer(
+                                Ds2Telegram.Build(Ds2Telegram.TcuAddress, new byte[] { 0x00 }), timeoutMs);
+                            _note("module answers ident, retrying " + what);
+                        }
+                        catch (Exception identEx)
+                        {
+                            _note("module did not answer ident either: " + identEx.Message);
+                        }
+                    }
                 }
             }
             throw new InvalidOperationException(

@@ -38,9 +38,20 @@ namespace BmwebFlasher
         {
             InitializeComponent();
             Title = Global.Title;
+            BrandVersion.Text = "v" + (typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "");
+            ThemeSelect.ItemsSource = Skins.All;
+            ThemeSelect.SelectedItem = Skins.Find(Global.Theme);
+            KeepFlashedFiles_CheckBox.IsChecked = Global.KeepFlashedFiles;
+            WriteAif_CheckBox.IsChecked = Global.WriteAif;
+            DevSection.IsVisible = AppEnvironment.IsDevelopmentBuild;
+            DevUi_CheckBox.IsChecked = AppEnvironment.DevelopmentUi;
             RefreshCustomOptionsGate();
-            ProgressDME.Foreground = ReadingBrush;
             ModuleSelect.SelectedIndex = 0; // fault-codes module, DME by default
+
+            // The history tab follows the file: refilled whenever a session ends.
+            FlashHistory.Changed += () => Dispatcher.UIThread.Post(RefreshHistory);
+            RefreshHistory();
+            RefreshRail();
             // The flashing module starts UNSELECTED: the user must choose DME or
             // TCU before any control unit's buttons appear. This keeps the two
             // modules' actions from ever being confused.
@@ -100,31 +111,214 @@ namespace BmwebFlasher
         // --- UI helpers -----------------------------------------------------
         // WPF's Dispatcher.Invoke becomes Avalonia's Dispatcher.UIThread.
 
-        private void SetStatus(string text) =>
-            Dispatcher.UIThread.Post(() => statusTextBlock.Text = text);
+        private void SetStatus(string text)
+        {
+            Dispatcher.UIThread.Post(() =>
+            {
+                statusTextBlock.Text = text;
+                AppendLog(text);
+            });
+            FlashLog.Status(text);      // a running session keeps it as its outcome
+        }
+
+        // The log under the screen: every status line as it came, like MS4X
+        // Flasher's. Kept to a few hundred lines; the telegram logs on disk
+        // hold the detail.
+        private readonly List<string> _log = new List<string>();
+        private const int LogLines = 300;
+
+        private void AppendLog(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text) || StatusLog == null) return;
+            _log.Add(DateTime.Now.ToString("HH:mm:ss") + "  " + text);
+            _logLastInPlace = false;
+            TrimAndShowLog();
+        }
+
+        // A progress line (a percentage, an erase count) replaces the previous
+        // progress line rather than adding to the log, so a write leaves one
+        // line behind instead of a hundred and the log does not scroll away.
+        private bool _logLastInPlace;
+
+        private void AppendLogInPlace(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text) || StatusLog == null) return;
+            string line = DateTime.Now.ToString("HH:mm:ss") + "  " + text;
+            if (_logLastInPlace && _log.Count > 0) _log[_log.Count - 1] = line;
+            else _log.Add(line);
+            _logLastInPlace = true;
+            TrimAndShowLog();
+        }
+
+        private void TrimAndShowLog()
+        {
+            if (_log.Count > LogLines) _log.RemoveRange(0, _log.Count - LogLines);
+            StatusLog.Text = string.Join(Environment.NewLine, _log);
+            StatusLogScroll?.ScrollToEnd();
+        }
+
+        /// <summary>A status line that overwrites the last one of its kind in the log.</summary>
+        private void SetStatusInPlace(string text)
+        {
+            Dispatcher.UIThread.Post(() =>
+            {
+                statusTextBlock.Text = text;
+                AppendLogInPlace(text);
+            });
+            FlashLog.Status(text);
+        }
+
+        // --- rail -----------------------------------------------------------
+
+        private void RailFlashing_Click(object sender, RoutedEventArgs e)
+        {
+            MainTabs.SelectedIndex = 0;
+            ShowCustomOptions(false);
+        }
+
+        private void RailFaults_Click(object sender, RoutedEventArgs e) => MainTabs.SelectedIndex = 1;
+
+        private void RailLive_Click(object sender, RoutedEventArgs e) => MainTabs.SelectedIndex = 2;
+
+        private void RailHistory_Click(object sender, RoutedEventArgs e) => MainTabs.SelectedIndex = 3;
+
+        private void RailSettings_Click(object sender, RoutedEventArgs e) => MainTabs.SelectedIndex = 4;
+
+        private void MainTabs_SelectionChanged(object sender, Avalonia.Controls.SelectionChangedEventArgs e)
+            => RefreshRail();
+
+        /// <summary>Lights the rail glyph of the screen that is showing.</summary>
+        private void RefreshRail()
+        {
+            if (RailFlashing == null || MainTabs == null) return;   // during init
+            RailFlashing.Classes.Set("current", MainTabs.SelectedIndex == 0);
+            RailFaults.Classes.Set("current", MainTabs.SelectedIndex == 1);
+            RailLive.Classes.Set("current", MainTabs.SelectedIndex == 2);
+            RailHistory.Classes.Set("current", MainTabs.SelectedIndex == 3);
+            RailSettings.Classes.Set("current", MainTabs.SelectedIndex == 4);
+        }
 
         private void UpdateProgressBar(uint progress) =>
             Dispatcher.UIThread.Post(() => ProgressDME.Value = Math.Min(progress, 100),
                                      DispatcherPriority.Background);
 
-        private static readonly Avalonia.Media.IBrush FlashingBrush =
-            new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.FromRgb(0xC0, 0x39, 0x2B));
-
-        private static readonly Avalonia.Media.IBrush ReadingBrush =
-            new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.FromRgb(0x2E, 0x86, 0xC1));
-
         /// <summary>
         /// Colours the progress bar red while something is being written to a
-        /// module, so a flash in progress is never mistaken for a read, and blue
-        /// the rest of the time.
-        ///
-        /// Both states set a colour outright. Clearing the brush instead leaves
-        /// the bar with no fill at all, so it reads as empty however far along
-        /// it is.
+        /// module, so a flash in progress is never mistaken for a read; the
+        /// skin's accent the rest of the time. Done with a style class so the
+        /// colours follow the skin (see Styles/Flasher.axaml, ProgressBar).
         /// </summary>
         private void ShowProgressAsFlashing(bool flashing) =>
-            Dispatcher.UIThread.Post(() =>
-                ProgressDME.Foreground = flashing ? FlashingBrush : ReadingBrush);
+            Dispatcher.UIThread.Post(() => ProgressDME.Classes.Set("flashing", flashing));
+
+        // --- skin ---------------------------------------------------------
+
+        private void ThemeSelect_Changed(object sender, Avalonia.Controls.SelectionChangedEventArgs e)
+        {
+            if (ThemeSelect.SelectedItem is Skin skin && skin.Id != Global.Theme)
+            {
+                Global.Theme = skin.Id;
+                Skins.Apply(Avalonia.Application.Current, skin.Id);
+            }
+        }
+
+        // --- history ------------------------------------------------------
+
+        /// <summary>One logged session, as the History tab shows it.</summary>
+        public class HistoryRow
+        {
+            public string Time { get; set; }
+            public string Operation { get; set; }
+            public string Result { get; set; }
+            public string Car { get; set; }
+            public string Details { get; set; }
+            public string Status { get; set; }
+            public string Log { get; set; }
+            public string Files { get; set; }
+        }
+
+        private void KeepFlashedFiles_Changed(object sender, RoutedEventArgs e)
+            => Global.KeepFlashedFiles = KeepFlashedFiles_CheckBox.IsChecked == true;
+
+        private void WriteAif_Changed(object sender, RoutedEventArgs e)
+            => Global.WriteAif = WriteAif_CheckBox.IsChecked == true;
+
+        /// <summary>
+        /// Shows or hides the development-only conveniences, so a development
+        /// build can check what an end user gets. Off, the controls fall back
+        /// to what identify has enabled, exactly as in a release build.
+        /// </summary>
+        private void DevUi_Changed(object sender, RoutedEventArgs e)
+        {
+            AppEnvironment.DevelopmentUi = DevUi_CheckBox.IsChecked == true;
+            if (!AppEnvironment.IsDevelopment && !_dmeIdentified)
+            {
+                FullBin_CheckBox.IsEnabled = false;
+                LoadFile.IsEnabled = false;
+                LoadFile2.IsEnabled = false;
+            }
+            RefreshCustomOptionsGate();
+        }
+
+        private async void HistoryOpenFiles_Click(object sender, RoutedEventArgs e)
+        {
+            if (HistoryGrid.SelectedItem is HistoryRow row && row.Files != null && Directory.Exists(row.Files))
+                await Launcher.LaunchDirectoryInfoAsync(new DirectoryInfo(row.Files));
+        }
+
+        private void RefreshHistory()
+        {
+            var rows = new List<HistoryRow>();
+            foreach (FlashHistory.Entry e in FlashHistory.Load())
+            {
+                rows.Add(new HistoryRow
+                {
+                    Time = e.Started.ToString("yyyy-MM-dd HH:mm"),
+                    Operation = FlashHistory.Describe(e.Operation),
+                    Result = e.Result ?? string.Empty,
+                    Car = string.Join(" ", new[] { e.Vin, e.Module }.Where(s => !string.IsNullOrEmpty(s))),
+                    Details = e.Details ?? string.Empty,
+                    Status = (e.Status ?? string.Empty) + (e.Seconds > 0 ? "  (" + e.Seconds + " s)" : string.Empty),
+                    Log = e.Log,
+                    Files = e.Files,
+                });
+            }
+            HistoryGrid.ItemsSource = rows;
+            HistoryCount_Box.Text = rows.Count == 1 ? "1 session" : rows.Count + " sessions";
+            HistoryOpenLog.IsEnabled = false;
+            HistoryOpenFiles.IsEnabled = false;
+        }
+
+        private void HistoryGrid_SelectionChanged(object sender, Avalonia.Controls.SelectionChangedEventArgs e)
+        {
+            var row = HistoryGrid.SelectedItem as HistoryRow;
+            HistoryStatus_Box.Text = row == null ? "Select a session to see how it ended." : row.Status;
+            HistoryOpenLog.IsEnabled = row?.Log != null && File.Exists(row.Log);
+            HistoryOpenFiles.IsEnabled = row?.Files != null && Directory.Exists(row.Files);
+        }
+
+        private async void HistoryOpenLog_Click(object sender, RoutedEventArgs e)
+        {
+            if (HistoryGrid.SelectedItem is HistoryRow row && row.Log != null && File.Exists(row.Log))
+                await Launcher.LaunchFileInfoAsync(new FileInfo(row.Log));
+        }
+
+        private async void HistoryShowFolder_Click(object sender, RoutedEventArgs e)
+        {
+            string dir = Path.GetDirectoryName(FlashHistory.FilePath);
+            Directory.CreateDirectory(dir);
+            await Launcher.LaunchDirectoryInfoAsync(new DirectoryInfo(dir));
+        }
+
+        private async void HistoryClear_Click(object sender, RoutedEventArgs e)
+        {
+            bool copies = FlashHistory.Load().Any(h => h.Files != null && Directory.Exists(h.Files));
+            string message = "Forget every session in the history? The telegram logs" +
+                             (copies ? " and the saved copies of the flashed files" : string.Empty) +
+                             " are kept.";
+            if (await ConfirmAsync(message, "Clear History"))
+                FlashHistory.Clear();
+        }
 
         /// <summary>
         /// Replaces WPF MessageBox.Show(..., YesNo), which has no Avalonia
@@ -437,6 +631,7 @@ namespace BmwebFlasher
                 LoadSGBD.IsVisible = false;
                 IdentifyDME.IsEnabled = false;
                 ModuleInfoHeader.Text = "Select a control unit above.";
+                EcuName_Box.Text = "Select a control unit";
                 return;
             }
 
@@ -455,10 +650,11 @@ namespace BmwebFlasher
             LoadSGBD.IsVisible = !_flashTcu;
             IdentifyDME.IsEnabled = true;
             ModuleInfoHeader.Text = _flashTcu ? "TCU Information:" : "DME Information:";
+            EcuName_Box.Text = _flashTcu ? "TCU not identified" : "DME not identified";
 
             // The identified state belongs to one module; clear it on a switch.
             DMEType_Box.Text = HWRef_Box.Text = SWRef_Box.Text = programStatus_Box.Text =
-                VIN_Box.Text = progRef_Box.Text = diagProtocol_Box.Text = string.Empty;
+                VIN_Box.Text = progRef_Box.Text = diagProtocol_Box.Text = "—";
             ReadTcuCal.IsEnabled = false;
             LoadTcuCal.IsEnabled = false;
             WriteTcuCal.IsEnabled = false;
@@ -469,9 +665,12 @@ namespace BmwebFlasher
             InstallReadPatch.IsEnabled = false;
             _tcuCalToWrite = null;
             _tcuProgramToWrite = null;
+            _tcuCalName = _tcuProgramName = null;
             _tcuSgbd = null;
             _tcuIdentSwNr = _tcuIdentBmwNr = null;
+            _tcuAif = new Dictionary<string, string>();
             RefreshNoUpshiftGate();
+            RefreshTcuFullBinVisibility();
             SetStatus("Module: " + (_flashTcu ? "TCU (transmission)" : "DME (engine)"));
         }
 
@@ -584,7 +783,6 @@ namespace BmwebFlasher
                 return;
             }
 
-            SetStatus("Probing transmission variants...");
             bool found = false;
             foreach (string variant in TcuVariants)
             {
@@ -593,6 +791,8 @@ namespace BmwebFlasher
                 {
                     _tcuSgbd = variant;
                     ShowTcuIdent(ediabas, variant);
+                    CaptureTcuAif(ediabas);
+                    Dispatcher.UIThread.Post(RefreshCustomOptionsGate);
                     found = true;
                     break;
                 }
@@ -855,7 +1055,7 @@ namespace BmwebFlasher
                     var progress = new Progress<int>(p =>
                     {
                         UpdateProgressBar((uint)p);
-                        SetStatus(p + "%");
+                        SetStatusInPlace(p + "%");
                     });
                     return reader.Read(address, length, progress);
                 }
@@ -914,7 +1114,7 @@ namespace BmwebFlasher
                     var progress = new Progress<int>(p =>
                     {
                         UpdateProgressBar((uint)p);
-                        SetStatus(p + "%");
+                        SetStatusInPlace(p + "%");
                     });
                     return new Gs20CalReader(link).Read(progress);
                 }
@@ -991,20 +1191,36 @@ namespace BmwebFlasher
 
         private async void LoadTcuCal_Click(object sender, RoutedEventArgs e)
         {
+            string path = await PickTcuCalibrationPathAsync("Load TCU Calibration");
+            if (path == null) return;
+            await LoadTcuCalibrationAsync(path, forProgram: false);
+        }
+
+        private async Task<string> PickTcuCalibrationPathAsync(string title)
+        {
+            var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+            {
+                Title = title,
+                AllowMultiple = false,
+                FileTypeFilter = CalibrationFilters()
+            });
+            var picked = files?.FirstOrDefault();
+            string path = picked?.TryGetLocalPath();
+            picked?.Dispose();
+            return string.IsNullOrEmpty(path) ? null : path;
+        }
+
+        /// <summary>
+        /// Loads a calibration (raw 64 KB or a BMW .0DA) as the one to write.
+        /// With <paramref name="forProgram"/> it is the calibration paired
+        /// with a loaded program, written straight after it: a .0DA is then
+        /// used as it is, without the save-or-use question. Returns whether
+        /// a calibration is now loaded.
+        /// </summary>
+        private async Task<bool> LoadTcuCalibrationAsync(string path, bool forProgram)
+        {
             try
             {
-                var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
-                {
-                    Title = "Load TCU Calibration",
-                    AllowMultiple = false,
-                    FileTypeFilter = CalibrationFilters()
-                });
-
-                var picked = files?.FirstOrDefault();
-                string path = picked?.TryGetLocalPath();
-                picked?.Dispose();
-                if (string.IsNullOrEmpty(path))
-                    return;
 
                 // A .0DA is BMW's own Daten file: Intel HEX addressed at
                 // 0x090000, with a final block in a non-standard record type.
@@ -1022,11 +1238,12 @@ namespace BmwebFlasher
                     {
                         _tcuCalToWrite = null;
                         WriteTcuCal.IsEnabled = false;
+                        RefreshTcuCalName();
                         SetStatus("Could not read that Daten file: " + ex.Message);
                         await MessageAsync(
                             "This file could not be decoded, so nothing was loaded.\n\n" +
                             ex.Message, "Load Calibration");
-                        return;
+                        return false;
                     }
 
                     string vehicle = Gs20DatenFile.ReadVehicle(path);
@@ -1035,7 +1252,7 @@ namespace BmwebFlasher
                     // A .0DA is BMW's own format, not something the module can
                     // take directly, so say what it turned out to be and let
                     // the choice of what to do with it be explicit.
-                    int choice = await ChooseAsync(
+                    int choice = forProgram ? 1 : await ChooseAsync(
                         Path.GetFileName(path) + " is a BMW Daten file and has been " +
                         "converted to a 64 KB calibration.\n\n" +
                         (reference != null ? "Calibration:  " + reference + "\n" : string.Empty) +
@@ -1047,7 +1264,7 @@ namespace BmwebFlasher
                     if (choice < 0)
                     {
                         SetStatus("Nothing loaded");
-                        return;
+                        return false;
                     }
 
                     if (choice == 0 || choice == 2)          // save
@@ -1067,7 +1284,7 @@ namespace BmwebFlasher
                     {
                         SetStatus("Converted " + Path.GetFileName(path) +
                                   (reference != null ? " (" + reference + ")" : string.Empty));
-                        return;
+                        return false;
                     }
 
                     datenNote = " [.0DA" +
@@ -1082,9 +1299,10 @@ namespace BmwebFlasher
                 {
                     _tcuCalToWrite = null;
                     WriteTcuCal.IsEnabled = false;
+                    RefreshTcuCalName();
                     SetStatus("A GS20 calibration is 64 KB; that file is 0x" +
                               cal.Length.ToString("X") + " bytes");
-                    return;
+                    return false;
                 }
 
                 // Every GS20 calibration ends C7 A3 8C 44. One that does not is
@@ -1095,6 +1313,7 @@ namespace BmwebFlasher
                 {
                     _tcuCalToWrite = null;
                     WriteTcuCal.IsEnabled = false;
+                    RefreshTcuCalName();
                     SetStatus("That calibration is missing its trailer; not loaded");
                     await MessageAsync(
                         "This file does not end with the four bytes every GS20 " +
@@ -1102,7 +1321,7 @@ namespace BmwebFlasher
                         "this is written without complaint and then refused when " +
                         "the transmission validates it, so it has not been loaded.",
                         "Load Calibration");
-                    return;
+                    return false;
                 }
 
                 // Correct the checksum on the way in, so what is held here is
@@ -1110,6 +1329,8 @@ namespace BmwebFlasher
                 ushort stored = Gs20Checksum.Stored(cal);
                 _tcuCalToWrite = Gs20Checksum.Correct(cal);
                 ushort corrected = Gs20Checksum.Stored(_tcuCalToWrite);
+                _tcuCalName = Path.GetFileName(path);
+                RefreshTcuCalName();
 
                 WriteTcuCal.IsEnabled = true;
 
@@ -1125,14 +1346,142 @@ namespace BmwebFlasher
                           (CalibrationMatchesTransmission(version)
                               ? string.Empty
                               : " - does NOT match the identified transmission"));
+                return true;
             }
             catch (Exception ex)
             {
                 _tcuCalToWrite = null;
                 WriteTcuCal.IsEnabled = false;
                 RefreshNoUpshiftGate();
+                RefreshTcuCalName();
                 SetStatus("Could not load the calibration: " + ex.Message);
                 await MessageAsync(Describe(ex), "Load Calibration");
+                return false;
+            }
+        }
+
+        private string _tcuCalName, _tcuProgramName;
+
+        /// <summary>
+        /// Full Binary shows the program write and hides the calibration
+        /// write, like the DME's panel; the loaded calibration then shows as
+        /// the one written after the program.
+        /// </summary>
+        private void TcuFullBin_CheckBox_Changed(object sender, RoutedEventArgs e) => RefreshTcuFullBinVisibility();
+
+        private void RefreshTcuFullBinVisibility()
+        {
+            if (TcuFullBin_CheckBox == null || WriteTcuCal == null) return;   // during init
+            bool full = TcuFullBin_CheckBox.IsChecked == true;
+            WriteTcuCal.IsVisible = !full;
+            LoadTcuProgram.IsVisible = full;
+            WriteTcuProgram.IsVisible = full;
+            InstallReadPatch.IsVisible = full;
+            RefreshTcuCalName();
+        }
+
+        /// <summary>The loaded files, under the buttons that loaded them.</summary>
+        private void RefreshTcuCalName()
+        {
+            if (TcuCalName_Box == null || TcuFullBin_CheckBox == null) return;
+            bool full = TcuFullBin_CheckBox.IsChecked == true;
+            string calVersion = _tcuCalToWrite != null ? Gs20Checksum.ReadVersion(_tcuCalToWrite) : null;
+            string calText = _tcuCalToWrite == null ? null
+                : (_tcuCalName ?? "calibration") + (calVersion != null ? "  " + calVersion : string.Empty);
+
+            TcuCalName_Box.Text = calText ?? string.Empty;
+            TcuCalName_Box.IsVisible = calText != null && !full;
+
+            TcuProgramName_Box.Text = _tcuProgramName ?? string.Empty;
+            TcuProgramName_Box.IsVisible = full && _tcuProgramToWrite != null;
+
+            TcuProgramTune_Box.Text = calText != null ? "+ " + calText : string.Empty;
+            TcuProgramTuneRow.IsVisible = full && _tcuProgramToWrite != null && calText != null;
+        }
+
+        private void TcuProgramTuneRemove_Click(object sender, RoutedEventArgs e)
+        {
+            _tcuCalToWrite = null;
+            _tcuCalName = null;
+            WriteTcuCal.IsEnabled = false;
+            RefreshNoUpshiftGate();
+            RefreshTcuCalName();
+            SetStatus("Calibration removed; only the program will be written");
+        }
+
+        /// <summary>
+        /// After a program is loaded: a program of another release than the
+        /// transmission runs needs a calibration of its own release written
+        /// after it (the module reports a program/data mismatch and does not
+        /// run until it has one), so one is asked for and the program is
+        /// dropped without it. For the same release the calibration is
+        /// offered as an option, like the DME's .0DA next to a .0PA.
+        /// </summary>
+        private async Task PairCalibrationWithProgramAsync(string release)
+        {
+            string reported = (_tcuIdentSwNr ?? string.Empty).Trim().TrimStart('0');
+            bool required = !string.Equals(release, reported, StringComparison.Ordinal);
+
+            string loadedRelease = _tcuCalToWrite != null
+                ? Gs20Checksum.ReadRelease(Gs20Checksum.ReadVersion(_tcuCalToWrite)) : null;
+            if (_tcuCalToWrite != null && (!required || string.Equals(loadedRelease, release, StringComparison.Ordinal)))
+                return;   // the calibration already loaded goes with it
+
+            while (true)
+            {
+                bool pick = required
+                    ? await ConfirmAsync(
+                        "This program is release " + release + "; the transmission reports " +
+                        (reported.Length > 0 ? "software " + reported : "no software (boot block only)") + ".\n\n" +
+                        "A transmission only accepts a program together with a calibration of the same " +
+                        "release (with a different one it reports a program/data mismatch and does not run), " +
+                        "so a release-" + release + " calibration is written straight after this program.\n\n" +
+                        "Choose it now: a matching .0DA from SP-Daten, or a tune built on one.",
+                        "Program needs a matching calibration")
+                    : await ConfirmAsync(
+                        "Also write a calibration after this program?\n\n" +
+                        "Optional: without one the calibration on the transmission stays as it is. " +
+                        "A .0DA from SP-Daten or a 64 KB tune can be chosen.",
+                        "Add a calibration");
+                if (!pick)
+                {
+                    if (!required) return;
+                    _tcuProgramToWrite = null;
+                    _tcuProgramName = null;
+                    WriteTcuProgram.IsEnabled = false;
+                    RefreshTcuCalName();
+                    SetStatus("Program not loaded: it needs a release-" + release + " calibration");
+                    return;
+                }
+                string path = await PickTcuCalibrationPathAsync(required
+                    ? "Choose the release-" + release + " calibration to write after the program"
+                    : "Choose the calibration to write after the program");
+                if (path == null)
+                {
+                    if (!required) return;
+                    continue;
+                }
+                if (!await LoadTcuCalibrationAsync(path, forProgram: true))
+                {
+                    if (!required) return;
+                    continue;
+                }
+                string chosen = Gs20Checksum.ReadRelease(Gs20Checksum.ReadVersion(_tcuCalToWrite));
+                if (required && !string.Equals(chosen, release, StringComparison.Ordinal))
+                {
+                    await MessageAsync(
+                        "That calibration is release " + (chosen ?? "unknown") + "; the program is release " +
+                        release + ". It would leave the transmission with a program/data mismatch. Choose a " +
+                        "release-" + release + " calibration.",
+                        "Calibration does not match the program");
+                    _tcuCalToWrite = null;
+                    _tcuCalName = null;
+                    WriteTcuCal.IsEnabled = false;
+                    RefreshNoUpshiftGate();
+                    RefreshTcuCalName();
+                    continue;
+                }
+                return;
             }
         }
 
@@ -1200,10 +1549,14 @@ namespace BmwebFlasher
 
         private void RefreshNoUpshiftGate()
         {
-            bool allowed = NoUpshiftBlockedReason() == null;
-            NoUpshift_CheckBox.IsEnabled = allowed;
-            if (!allowed)
+            if (NoUpshift_CheckBox == null) return; // during init
+            string blocked = NoUpshiftBlockedReason();
+            NoUpshift_CheckBox.IsEnabled = blocked == null;
+            if (blocked != null)
                 NoUpshift_CheckBox.IsChecked = false;
+            if (NoUpshiftReason_Box != null)
+                NoUpshiftReason_Box.Text = blocked ?? string.Empty;
+            RefreshCustomOptionsSummary();
         }
 
         private async void NoUpshift_CheckBox_Changed(object sender, RoutedEventArgs e)
@@ -1231,6 +1584,7 @@ namespace BmwebFlasher
             {
                 NoUpshift_CheckBox.IsChecked = false;
             }
+            RefreshCustomOptionsSummary();
         }
 
         // --- Program write ----------------------------------------------------
@@ -1322,14 +1676,18 @@ namespace BmwebFlasher
 
                 ushort stored = Gs20ProgramChecksum.Stored(program);
                 _tcuProgramToWrite = Gs20ProgramChecksum.Corrected(program, out ushort checksum);
+                _tcuProgramName = Path.GetFileName(path) + "  release " + release;
                 WriteTcuProgram.IsEnabled = string.Equals(_tcuSgbd, "gs20.prg",
                                                           StringComparison.OrdinalIgnoreCase);
+                RefreshTcuCalName();
 
                 SetStatus("Loaded " + Path.GetFileName(path) + " [" + origin + "] release " +
                           release + (ProgramHasReadPatch(_tcuProgramToWrite) ? ", read patch present" : ", stock") +
                           (stored == checksum ? ", checksum already correct"
                                               : ", checksum corrected 0x" + stored.ToString("X4") +
                                                 " -> 0x" + checksum.ToString("X4")));
+
+                await PairCalibrationWithProgramAsync(release);
             }
             catch (Exception ex)
             {
@@ -1428,30 +1786,63 @@ namespace BmwebFlasher
                 return;
             }
 
-            // The software level has to agree. The read patch's hook is a
-            // retargeted jump at a fixed address; on another release that
-            // address is the middle of some other instruction.
+            // The boot block cross-checks the program against the data set:
+            // a program of one release over a calibration of another leaves
+            // the module reporting flash status 0E (program/data mismatch)
+            // and it does not run, until a calibration of the program's
+            // release is written. So a program of a different release than
+            // the transmission runs now needs a matching calibration loaded,
+            // and that calibration is written right after the program.
+            // (Seen on a 7544721/89 unit given the 7552700/90 program: 0E
+            // after two complete writes, 01 the moment a 0090 calibration
+            // followed.)
             string release = ProgramRelease(_tcuProgramToWrite);
             string reported = (_tcuIdentSwNr ?? string.Empty).Trim().TrimStart('0');
-            if (!string.Equals(release, reported, StringComparison.Ordinal))
+            bool releaseChanges = !string.Equals(release, reported, StringComparison.Ordinal);
+            bool calibrationFollows = _tcuCalToWrite != null;
+            if (releaseChanges)
             {
-                if (!await ConfirmAsync(
-                        "Calibration read off of the transmission doesn't match the loaded file. " +
-                        "This may cause an error within the software. Proceed?",
-                        "Program does not match"))
+                string calRelease = _tcuCalToWrite != null
+                    ? Gs20Checksum.ReadRelease(Gs20Checksum.ReadVersion(_tcuCalToWrite))
+                    : null;
+                if (release == null || calRelease == null || !string.Equals(calRelease, release, StringComparison.Ordinal))
                 {
-                    SetStatus("Write cancelled: the program does not match the transmission");
+                    SetStatus("Write cancelled: a calibration of release " + (release ?? "?") + " must be loaded first");
+                    await MessageAsync(
+                        "This program is release " + (release ?? "unknown") + "; the transmission reports " +
+                        (reported.Length > 0 ? "software " + reported : "no software (boot block only)") + ".\n\n" +
+                        "A transmission only accepts a program together with a calibration of the same " +
+                        "release: with a different one in place it reports a program/data mismatch " +
+                        "(flash status 0E) and does not run.\n\n" +
+                        "Load a release-" + (release ?? "?") + " calibration (a matching .0DA from SP-Daten, or a " +
+                        "tune built on one) with Load Calibration File, then Write Program again: the " +
+                        "program is written first and that calibration straight after it." +
+                        (_tcuCalToWrite == null
+                            ? ""
+                            : "\n\nThe calibration loaded now is " + (Gs20Checksum.ReadVersion(_tcuCalToWrite) ?? "of unknown version") +
+                              ", which is release " + (calRelease ?? "unknown") + "."),
+                        "Program needs a matching calibration");
                     return;
                 }
             }
 
             if (!await ConfirmAsync(
-                    "This will overwrite the program. Keep the engine off with a charger on, " +
-                    "and do not switch off or unplug until it reports done.\n\nProceed?",
+                    "This will overwrite the program" +
+                    (calibrationFollows
+                        ? (releaseChanges
+                            ? " (release " + release + ", replacing " + (reported.Length > 0 ? "software " + reported : "an unknown release") +
+                              ") and then write the loaded release-" + release + " calibration, which the transmission " +
+                              "requires to accept the new program."
+                            : " and then write the loaded calibration (" + (Gs20Checksum.ReadVersion(_tcuCalToWrite) ?? "unknown version") + ").")
+                        : ".") +
+                    " Keep the engine off with a charger on, and do not switch off or unplug until it reports done." +
+                    "\n\nProceed?",
                     "Write Program"))
             {
                 return;
             }
+
+            if (!await ConfirmProgrammingCounterAsync(tcu: true)) return;
 
             ReadTcuCal.IsEnabled = LoadTcuCal.IsEnabled = WriteTcuCal.IsEnabled = false;
             TestFullRead.IsEnabled = LoadTcuProgram.IsEnabled = WriteTcuProgram.IsEnabled = false;
@@ -1465,6 +1856,7 @@ namespace BmwebFlasher
                 using (FlashLog.Session("tcu-program-write", out logPath))
                 {
                     byte[] image = _tcuProgramToWrite;
+                    FlashLog.Attach("tcu_program_0x0A0000.bin", image);
                     FlashLog.Note("TCU " + _tcuSgbd + " / ident " + DescribeIdentifiedSoftware() +
                                   " / program release " + release +
                                   " / checksum 0x" + Gs20ProgramChecksum.Stored(image).ToString("X4") +
@@ -1474,7 +1866,7 @@ namespace BmwebFlasher
                     var progress = new Progress<int>(p =>
                     {
                         UpdateProgressBar((uint)p);
-                        SetStatus("Writing program " + p + "%");
+                        SetStatusInPlace("Writing program " + p + "%");
                     });
 
                     // The erase phase reports no progress: four sector erases
@@ -1483,15 +1875,13 @@ namespace BmwebFlasher
                     // notes for that phase into status lines so the wait is
                     // visibly the erase and not a hang.
                     int sectorsErased = 0;
-                    int sectorCount = Gs20ProgramWriter.Sectors.Length;
                     Action<string> writerNote = text =>
                     {
                         FlashLog.Note(text);
                         if (text.StartsWith("erase 0x", StringComparison.Ordinal))
-                            SetStatus("Erasing program sector " + ++sectorsErased + " of " + sectorCount +
-                                      " (a few seconds each, no progress shown)");
+                            SetStatusInPlace("Erasing, " + ++sectorsErased);
                         else if (text.StartsWith("write ", StringComparison.Ordinal))
-                            SetStatus("Writing program 0%");
+                            SetStatusInPlace("Writing program 0%");
                     };
 
                     await Task.Run(() =>
@@ -1505,17 +1895,31 @@ namespace BmwebFlasher
                             FlashLog.Note("PHASE: session");
                             SetStatus("Opening transmission session");
                             session.OpenSession();
+                            LogTcuInfo(session);
                             FlashLog.Note("session open");
 
-                            // Unlike the calibration path this one insists on a
-                            // reading: a brown-out mid-write is the one failure
-                            // that cannot be undone from here.
-                            decimal volts = session.ReadBatteryVolts();
-                            FlashLog.Note("battery " + volts.ToString("0.0") + " V");
-                            if (volts < 11.5m)
-                                throw new InvalidOperationException(
-                                    "Supply is " + volts.ToString("0.0") + " V. A program write needs a " +
-                                    "steady supply above 11.5 V; put a charger or bench supply on it.");
+                            // A brown-out mid-write is the one failure that
+                            // cannot be undone from here, so a reading that
+                            // comes back low stops the write. A module whose
+                            // program is erased answers from its boot block,
+                            // which refuses this request (status 0xA2) while
+                            // taking every flash command - that is exactly the
+                            // module that most needs writing, so a refusal is
+                            // noted and the write goes on.
+                            try
+                            {
+                                decimal volts = session.ReadBatteryVolts();
+                                FlashLog.Note("battery " + volts.ToString("0.0") + " V");
+                                if (volts < 11.5m)
+                                    throw new InvalidOperationException(
+                                        "Supply is " + volts.ToString("0.0") + " V. A program write needs a " +
+                                        "steady supply above 11.5 V; put a charger or bench supply on it.");
+                            }
+                            catch (InvalidOperationException ex) when (!ex.Message.StartsWith("Supply"))
+                            {
+                                FlashLog.Note("battery reading unavailable (boot block answering?): " + ex.Message);
+                                SetStatus("Battery reading not available from this module; keep a charger on");
+                            }
 
                             // Baud before unlock, never after: the switch
                             // settles with an identify, and an identify closes
@@ -1531,6 +1935,7 @@ namespace BmwebFlasher
                             FlashLog.Note("PHASE: session + unlock");
                             SetStatus("Unlocking transmission for programming");
                             session.OpenSession();
+                            LogTcuInfo(session);
                             session.Unlock();
                             FlashLog.Note("unlocked");
                             SetStatus("Unlocked, checking the module accepts flash commands");
@@ -1541,6 +1946,11 @@ namespace BmwebFlasher
                                 writer.Write(image, progress);
 
                                 FlashLog.Note("RESULT: written and committed, 0x40000 bytes");
+
+                                // One log entry per programming operation: when
+                                // the calibration follows, that write makes it.
+                                if (!calibrationFollows)
+                                    TryWriteTcuAif(session, image, null);
                             }
                             finally
                             {
@@ -1556,6 +1966,20 @@ namespace BmwebFlasher
                     // is power-cycled, so an identify now answers regardless
                     // and proves nothing. The status says what would.
                     FlashLog.Note("RESULT: written and committed");
+                    if (calibrationFollows)
+                    {
+                        // The module now holds the new release, so the
+                        // calibration check below compares against it.
+                        _tcuIdentSwNr = release;
+                        SetStatus("Program written; writing the calibration");
+                        await MessageAsync(
+                            "The program was written. The calibration is written next" +
+                            (releaseChanges ? "; the transmission does not accept the new program until it is." : "."),
+                            "Write Program");
+                        _tcuCalFollowsProgram = true;
+                        WriteTcuCal_Click(sender, e);
+                        return;
+                    }
                     SetStatus("Program written. Cycle the ignition before driving.");
                     await MessageAsync(
                         "The program was written and the transmission confirmed it.\n\n" +
@@ -1570,12 +1994,7 @@ namespace BmwebFlasher
                     ? "\n\nNothing was erased or written, so the program on the transmission " +
                       "is unchanged."
                     : "\n\n" + _tcuProgramSectorsErased + " of 4 program sectors were erased before " +
-                      "this failed.\n\nDO NOT SWITCH THE IGNITION OFF. The transmission keeps " +
-                      "serving the programming session until it is power-cycled, so it is still " +
-                      "open right now: fix the cause, load a known-good program and write it " +
-                      "again immediately. It is only after a power cycle that a half-written " +
-                      "program stops the module answering, and from then on recovery is the " +
-                      "boot-strap loader on the bench. The boot block and calibration are intact.";
+                      "this failed.";
                 await MessageAsync(Describe(ex) + aftermath + DescribeLog(logPath), "Write Program");
             }
             finally
@@ -1652,6 +2071,12 @@ namespace BmwebFlasher
                 return;
             }
 
+            // A calibration written straight after a program is the same
+            // programming operation, already counted and confirmed.
+            bool followsProgram = _tcuCalFollowsProgram;
+            _tcuCalFollowsProgram = false;
+            if (!followsProgram && !await ConfirmProgrammingCounterAsync(tcu: true)) return;
+
             ReadTcuCal.IsEnabled = LoadTcuCal.IsEnabled = false;
             WriteTcuCal.IsEnabled = false;
             TestFullRead.IsEnabled = false;
@@ -1674,12 +2099,13 @@ namespace BmwebFlasher
                         : _tcuCalToWrite;
                     if (!ReferenceEquals(image, _tcuCalToWrite))
                         FlashLog.Note("auto upshift removed");
+                    FlashLog.Attach("tcu_calibration_0x090000.bin", image);
 
                     bool fastMode = TcuFastMode.IsChecked == true;
                     var progress = new Progress<int>(p =>
                     {
                         UpdateProgressBar((uint)p);
-                        SetStatus(p + "%");
+                        SetStatusInPlace(p + "%");
                     });
                     _tcuWriteErased = false;
 
@@ -1735,6 +2161,7 @@ namespace BmwebFlasher
                             try
                             {
                                 writer.Write(image, progress);
+                                TryWriteTcuAif(writer, null, image);
                             }
                             finally
                             {
@@ -1860,14 +2287,16 @@ namespace BmwebFlasher
                 HWRef_Box.Text = hwNr;
                 SWRef_Box.Text = swNr;
                 programStatus_Box.Text = bmwNr;
-                VIN_Box.Text = string.Empty;
+                VIN_Box.Text = "—";
                 progRef_Box.Text = sgbdLabel;
                 diagProtocol_Box.Text = Global.diagProtocol;
+                EcuName_Box.Text = "TCU  " + hwNr + "  ·  " + swNr;
                 ReadTcuCal.IsEnabled = true;
 
                 // The fault tab reads whichever module is selected there, so a
                 // transmission that answers is reason enough to open it.
                 FaultsTab.IsEnabled = true;
+                LiveTab.IsEnabled = true;
 
                 // Only the GS20's calibration layout and checksum are known, so
                 // the write tooling stays shut for any other transmission.
@@ -1886,7 +2315,9 @@ namespace BmwebFlasher
                     WriteTcuCal.IsEnabled = false;
                 }
             });
-            SetStatus("TCU identified (" + sgbdLabel + ")");
+            // A GS20 gets its line from the read-patch probe that follows.
+            if (!string.Equals(_tcuSgbd, "gs20.prg", StringComparison.OrdinalIgnoreCase))
+                SetStatus("TCU identified (" + sgbdLabel + ")");
         }
 
         /// <summary>
@@ -1922,11 +2353,21 @@ namespace BmwebFlasher
         /// Unwraps the exception chain so the dialog shows the real cause
         /// rather than a bare "an exception occurred" wrapper.
         /// </summary>
+        /// <summary>
+        /// The message chain as plain text: no type names, and an inner
+        /// message that the outer one already quotes is not repeated (the
+        /// writers wrap a timeout as "failed after 3 attempts: <timeout>").
+        /// </summary>
         private static string Describe(Exception ex)
         {
             var parts = new List<string>();
             for (Exception e = ex; e != null; e = e.InnerException)
-                parts.Add(e.GetType().Name + ": " + e.Message);
+            {
+                string m = e.Message?.Trim();
+                if (string.IsNullOrEmpty(m)) continue;
+                if (parts.Count > 0 && parts[parts.Count - 1].Contains(m)) continue;
+                parts.Add(m);
+            }
             return string.Join("\n\n", parts);
         }
 
@@ -1994,6 +2435,107 @@ namespace BmwebFlasher
                 SetStatus("Flash failed: " + ex.Message);
                 await MessageAsync(Describe(ex), "Flash Program");
             }
+        }
+
+        /// <summary>
+        /// The module's info block (command 0D). BMW's programming SGBD takes
+        /// the addresses of the ZIF, its backup and the AIF area from bytes
+        /// 0x3C, 0x33 and 0x3F of this reply; it is logged so a real one can
+        /// be read before anything is written there.
+        /// </summary>
+        private static void LogTcuInfo(Gs20CalWriter session)
+        {
+            try { FlashLog.Note("info (0D): " + Ds2Telegram.ToHex(session.ReadInfo(), 96)); }
+            catch (Exception ex) { FlashLog.Note("info (0D) unavailable: " + ex.Message); }
+        }
+
+        private async void VerifyProgram_Click(object sender, RoutedEventArgs e)
+        {
+            bool go = await ConfirmAsync(
+                "This runs the DME's program and calibration signature checks and resets it. " +
+                "Nothing is written.\n\n" +
+                "Use it when a flash stopped after the program was written but before it was " +
+                "verified: the program and the tune are on the DME, but it stays in the bootloader " +
+                "(programming status 5) until both checks have passed.\n\n" +
+                "Ignition on, engine off. Continue?",
+                "Finish Programming");
+            if (!go) return;
+
+            try { await VerifyProgramming(); }
+            catch (Exception ex)
+            {
+                SetStatus("Verification failed: " + ex.Message);
+                await MessageAsync(Describe(ex), "Finish Programming");
+            }
+        }
+
+        /// <summary>
+        /// The tail of a program flash on its own: security access, the
+        /// program signature check, the calibration signature check, reset.
+        /// The full flash only runs the checks after every partition has
+        /// been written, so an interrupted calibration write leaves the
+        /// program unverified and the DME in the bootloader, and a tune-only
+        /// write cannot clear that (the status only advances once the
+        /// program has been checked). This does, without rewriting anything.
+        /// </summary>
+        private async Task VerifyProgramming()
+        {
+            bool success = true;
+            ShowProgressAsFlashing(true);
+            try
+            {
+            using (FlashLog.Session("verify-program", out string logPath))
+            {
+            FlashLog.Note("DME " + Global.HW_Ref + " / prog " + Global.Prog_Ref + " / diag " + Global.diagProtocol);
+            if (logPath != null) SetStatus("Logging to " + Path.GetFileName(logPath));
+
+            if (!await ConfirmProgrammingCounterAsync(tcu: false)) return;
+
+            using (EdiabasNet ediabas = StartEdiabas())
+            {
+                await Task.Run(() =>
+                {
+                    if (!RequestSecurityAccess(ediabas))
+                    {
+                        success = false;
+                        SetStatus("Security Access Denied");
+                    }
+                });
+                if (!success) return;
+
+                SetStatus("Checking the program signature");
+                await Task.Run(() => success = FinishFlash(ediabas, "Programm", false));
+                if (!success)
+                {
+                    SetStatus("Program signature check failed");
+                    return;
+                }
+                UpdateProgressBar(50);
+
+                SetStatus("Checking the calibration signature");
+                await Task.Run(() => success = FinishFlash(ediabas, "Daten"));
+                if (!success)
+                {
+                    SetStatus("Calibration signature check failed");
+                    return;
+                }
+                UpdateProgressBar(100);
+                SetStatus("Both signatures verified, DME reset");
+            }
+
+            // Re-identify after the port is released; see FlashDME_Data. The
+            // identify reads the programming status, which should now be
+            // "programmed" rather than 5.
+            // The flash is over: blank the bar and drop the flashing colour
+            // before the re-identify, whose own reads no longer drive it.
+            ShowProgressAsFlashing(false);
+            UpdateProgressBar(0);
+            await Task.Run(() => IdentDME(preflightPort: false));
+            // BMW's tools log every flash in the module; so does this one.
+            if (success && Global.WriteAif) await WriteDmeAifAsync();
+            } // FlashLog session
+            }
+            finally { ShowProgressAsFlashing(false); }
         }
 
         // --- Fault codes ----------------------------------------------------
@@ -2091,6 +2633,8 @@ namespace BmwebFlasher
             public string Location { get; set; }
             public string Symptom { get; set; }
             public string Present { get; set; }
+            /// <summary>Environment and freeze-frame data (mileage, counters, the values captured when it set), one per line.</summary>
+            public string Environment { get; set; }
         }
 
         private async void ReadFaults_Click(object sender, RoutedEventArgs e)
@@ -2181,6 +2725,7 @@ namespace BmwebFlasher
                 {
                     string pcode = string.Empty;
                     string pcodeText = string.Empty;
+                    string environment = string.Empty;
                     if (tryDetail &&
                         !string.IsNullOrEmpty(s.ortNr) &&
                         ExecuteJob(ediabas, "FS_LESEN_DETAIL", s.ortNr) &&
@@ -2211,6 +2756,15 @@ namespace BmwebFlasher
                         location = s.ort;
                     }
 
+                    // The freeze frame: mileage and counters, the environment
+                    // conditions (F_UWn) and the measured values (F_FFn) the
+                    // DME stored when the fault set. For a stall or a
+                    // monitor reset this is what says why. Only the DME's
+                    // SGBD offers it; a missing job just leaves it empty.
+                    if (tryDetail && !string.IsNullOrEmpty(s.ortNr) &&
+                        ExecuteJob(ediabas, "FS_LESEN_FREEZE_FRAME", s.ortNr) && ediabas.ResultSets != null)
+                        environment = DescribeFreezeFrame(ediabas.ResultSets);
+
                     rows.Add(new FaultRow
                     {
                         Code = code,
@@ -2219,6 +2773,7 @@ namespace BmwebFlasher
                         Location = location,
                         Symptom = s.symptom,
                         Present = s.present,
+                        Environment = environment,
                     });
                 }
             }
@@ -2238,12 +2793,45 @@ namespace BmwebFlasher
         /// FS_LESEN_DETAIL) come back as Int64, which SetString would drop --
         /// that was why the P-code column stayed empty.
         /// </summary>
+        /// <summary>
+        /// The freeze-frame result set as readable lines: F_UW_KM / F_HFK /
+        /// F_LZ, then each F_UWn_TEXT with its value and unit, then each
+        /// F_FFn_TEXT with its value and unit. Names vary per fault, so the
+        /// sets are scanned for whatever is present.
+        /// </summary>
+        private static string DescribeFreezeFrame(List<Dictionary<string, EdiabasNet.ResultData>> sets)
+        {
+            var lines = new List<string>();
+            foreach (var set in sets)
+            {
+                string km = SetAny(set, "F_UW_KM"), hfk = SetAny(set, "F_HFK"), lz = SetAny(set, "F_LZ");
+                if (km != string.Empty || hfk != string.Empty || lz != string.Empty)
+                    lines.Add("mileage " + km + " km, frequency " + hfk + ", logistic counter " + lz);
+                for (int i = 1; i <= 8; i++)
+                {
+                    string text = SetString(set, "F_UW" + i + "_TEXT");
+                    if (string.IsNullOrWhiteSpace(text)) continue;
+                    string val = SetAny(set, "F_UW" + i + "_NR"), unit = SetString(set, "F_UW" + i + "_EINH");
+                    lines.Add(text.Trim() + ": " + val + (string.IsNullOrWhiteSpace(unit) ? "" : " " + unit.Trim()));
+                }
+                for (int i = 0; i <= 12; i++)
+                {
+                    string text = SetString(set, "F_FF" + i + "_TEXT");
+                    if (string.IsNullOrWhiteSpace(text)) continue;
+                    string val = SetAny(set, "F_FF" + i + "_WERT"), unit = SetString(set, "F_FF" + i + "_EINH");
+                    lines.Add(text.Trim() + ": " + val + (string.IsNullOrWhiteSpace(unit) ? "" : " " + unit.Trim()));
+                }
+            }
+            return string.Join(Environment.NewLine, lines);
+        }
+
         private static string SetAny(Dictionary<string, EdiabasNet.ResultData> set, string name)
         {
             if (!set.TryGetValue(name, out var rd) || rd.OpData == null)
                 return string.Empty;
             if (rd.OpData is string s) return s;
             if (rd.OpData is Int64 l) return l.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            if (rd.OpData is double d) return d.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
             if (rd.OpData is byte[] b) return BitConverter.ToString(b).Replace("-", string.Empty);
             return rd.OpData.ToString();
         }
@@ -2371,7 +2959,7 @@ namespace BmwebFlasher
                     return;
 
                 var sb = new System.Text.StringBuilder();
-                sb.AppendLine("Code,P-Code,P-Code Detail,Location,Symptom,Present");
+                sb.AppendLine("Code,P-Code,P-Code Detail,Location,Symptom,Present,Freeze Frame");
                 foreach (var f in _lastFaults)
                 {
                     sb.Append(Csv(f.Code)).Append(',')
@@ -2379,7 +2967,7 @@ namespace BmwebFlasher
                       .Append(Csv(f.PCodeText)).Append(',')
                       .Append(Csv(f.Location)).Append(',')
                       .Append(Csv(f.Symptom)).Append(',')
-                      .Append(Csv(f.Present)).Append("\r\n");
+                      .Append(Csv(f.Present)).Append(',').Append(Csv(f.Environment)).Append("\r\n");
                 }
 
                 File.WriteAllText(path, sb.ToString(), new System.Text.UTF8Encoding(true));
@@ -2406,7 +2994,7 @@ namespace BmwebFlasher
             var dialog = new Window
             {
                 Title = "Fault " + row.Code,
-                Width = 460,
+                Width = 560,
                 SizeToContent = SizeToContent.Height,
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
                 CanResize = false
@@ -2426,6 +3014,7 @@ namespace BmwebFlasher
                 { "Location", row.Location },
                 { "Symptom", row.Symptom },
                 { "Present", row.Present },
+                { "Freeze frame", row.Environment },
             };
 
             for (int r = 0; r < fields.GetLength(0); r++)
@@ -2480,6 +3069,7 @@ namespace BmwebFlasher
             // The files were cleared above; a loaded .0PA / .0DA goes with them.
             ClearExchangeFile(clearFiles: false);
             RefreshFullBinVisibility();
+            RefreshTcuFullBinVisibility();
 
             // Toggling Full Binary clears the loaded files above, so the gate
             // has to be re-evaluated against the new state.
@@ -2760,6 +3350,7 @@ namespace BmwebFlasher
             {
                 ExecuteJob(ediabas, "aif_lesen", string.Empty);
                 Global.VIN = GetResult_String("AIF_FG_NR", ediabas.ResultSets);
+                CaptureDmeAif(ediabas);
 
                 ExecuteJob(ediabas, "hardware_referenz_lesen", string.Empty);
                 Global.HW_Ref = GetResult_String("HARDWARE_REFERENZ", ediabas.ResultSets);
@@ -2777,6 +3368,10 @@ namespace BmwebFlasher
 
                 ExecuteJob(ediabas, "flash_programmier_status_lesen", string.Empty);
                 string programming_status = GetResult_String("FLASH_PROGRAMMIER_STATUS_TEXT", ediabas.ResultSets);
+                // Worth a line in the log: it is what tells an interrupted
+                // flash (program written but unverified) from a finished one.
+                if (!string.IsNullOrEmpty(programming_status))
+                    SetStatus("Programming status: " + programming_status);
 
                 DMEType = "Unknown / Unsuppported";
 
@@ -2822,15 +3417,18 @@ namespace BmwebFlasher
                     VIN_Box.Text = Global.VIN;
                     progRef_Box.Text = Global.Prog_Ref ?? "(not reported)";
                     diagProtocol_Box.Text = Global.diagProtocol;
+                    EcuName_Box.Text = DMEType + "  " + Global.HW_Ref + "  ·  " + Global.VIN;
 
                     if (DMEType != String.Empty && DMEType != "Unknown / Unsuppported")
                     {
                         ReadTune.IsEnabled = true;
                         LoadFile.IsEnabled = true;
                         FullBin_CheckBox.IsEnabled = true;
+                        VerifyProgram.IsEnabled = true;
                         // Fault-code jobs need a resolved SGBD and a module that
                         // answers, both of which a successful identify proves.
                         FaultsTab.IsEnabled = true;
+                        LiveTab.IsEnabled = true;
                     }
 
                     // Identifying a different DME can invalidate an already
@@ -3234,7 +3832,13 @@ namespace BmwebFlasher
             }
         }
 
-        private byte[] ReadMemory(EdiabasNet ediabas, uint start, uint end, string MemSegment)
+        /// <param name="showProgress">
+        /// False for the small reads identify makes (immobilizer bytes, map
+        /// switch state): they finished in under a second and, run right
+        /// after a flash, refilled the bar in the flashing colour before the
+        /// flash's own cleanup blanked it again.
+        /// </param>
+        private byte[] ReadMemory(EdiabasNet ediabas, uint start, uint end, string MemSegment, bool showProgress = true)
         {
             using (SleepBlocker.Acquire())
             {
@@ -3258,8 +3862,8 @@ namespace BmwebFlasher
                     start = start + segLength;
                     lengthRemaining = lengthRemaining - segLength;
 
-                    uint progress = bytesRead * 100 / length;
-                    UpdateProgressBar(progress);
+                    if (showProgress)
+                        UpdateProgressBar(bytesRead * 100 / length);
                     MemoryDump = MemoryDump.Concat(MemoryRead).ToArray();
                 }
 
@@ -3279,8 +3883,11 @@ namespace BmwebFlasher
             using (FlashLog.Session("flash-tune", out string logPath))
             {
             FlashLog.Note("DME " + Global.HW_Ref + " / prog " + Global.Prog_Ref +
-                          " / diag " + Global.diagProtocol);
+                          " / diag " + Global.diagProtocol +
+                          (string.IsNullOrEmpty(_loadedFlashName) ? string.Empty : " / file " + _loadedFlashName));
             if (logPath != null) SetStatus("Logging to " + Path.GetFileName(logPath));
+
+            if (!await ConfirmProgrammingCounterAsync(tcu: false)) return;
 
             using (EdiabasNet ediabas = StartEdiabas())
             {
@@ -3375,6 +3982,7 @@ namespace BmwebFlasher
                 byte[] toFlash = cal;
                 toFlash = ChecksumsSignatures.CorrectParameterChecksums(toFlash);
                 toFlash = ChecksumsSignatures.SignMS45Parameters(toFlash);
+                FlashLog.Attach("tune_0x40000.bin", toFlash);
 
                 SetStatus("Flashing ECU");
                 await Task.Run(() => success = FlashBlock(ediabas, toFlash, flashStart, flashEnd));
@@ -3389,7 +3997,13 @@ namespace BmwebFlasher
             // Re-identify AFTER the flash's EdiabasNet (and its serial port) has
             // been disposed by the using block above; preflight is skipped so a
             // still-releasing port node cannot report a false "Port unavailable".
+            // The flash is over: blank the bar and drop the flashing colour
+            // before the re-identify, whose own reads no longer drive it.
+            ShowProgressAsFlashing(false);
+            UpdateProgressBar(0);
             await Task.Run(() => IdentDME(preflightPort: false));
+            // BMW's tools log every flash in the module; so does this one.
+            if (success && Global.WriteAif) await WriteDmeAifAsync();
             } // FlashLog session
             }
             finally { ShowProgressAsFlashing(false); }
@@ -3432,8 +4046,12 @@ namespace BmwebFlasher
             {
             FlashLog.Note("DME " + Global.HW_Ref + " / prog " + Global.Prog_Ref +
                           " / diag " + Global.diagProtocol +
-                          " / EWS delete " + (EwsDelete_CheckBox.IsChecked == true));
+                          " / EWS delete " + (EwsDelete_CheckBox.IsChecked == true) +
+                          (string.IsNullOrEmpty(_loadedFlashName) ? string.Empty : " / " + _loadedFlashName) +
+                          (string.IsNullOrEmpty(_loadedMpcName) ? string.Empty : " + " + _loadedMpcName));
             if (logPath != null) SetStatus("Logging to " + Path.GetFileName(logPath));
+
+            if (!await ConfirmProgrammingCounterAsync(tcu: false)) return;
 
             using (EdiabasNet ediabas = StartEdiabas())
             {
@@ -3502,7 +4120,10 @@ namespace BmwebFlasher
                 }
 
                 byte[] toFlash = ChecksumsSignatures.CorrectProgramChecksums(source, Global.openedMPC);
-                toFlash = ChecksumsSignatures.SignMS45Program(toFlash, Global.openedMPC).Skip(0x60000).Take(0x9FF40).ToArray();
+                byte[] signedFlash = ChecksumsSignatures.SignMS45Program(toFlash, Global.openedMPC);
+                FlashLog.Attach("external_flash.bin", signedFlash);
+                FlashLog.Attach("mpc_flash.bin", Global.openedMPC);
+                toFlash = signedFlash.Skip(0x60000).Take(0x9FF40).ToArray();
 
                 // flash_loeschen erases exactly the start/length it is given - it
                 // does NOT wipe the whole program space (proven on the car: an
@@ -3602,7 +4223,13 @@ namespace BmwebFlasher
             }
 
             // Re-identify after the port is released; see FlashDME_Data.
+            // The flash is over: blank the bar and drop the flashing colour
+            // before the re-identify, whose own reads no longer drive it.
+            ShowProgressAsFlashing(false);
+            UpdateProgressBar(0);
             await Task.Run(() => IdentDME(preflightPort: false));
+            // BMW's tools log every flash in the module; so does this one.
+            if (success && Global.WriteAif) await WriteDmeAifAsync();
             } // FlashLog session
             }
             finally { ShowProgressAsFlashing(false); }

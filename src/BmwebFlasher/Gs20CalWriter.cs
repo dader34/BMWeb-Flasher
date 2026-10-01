@@ -141,14 +141,99 @@ namespace BmwebFlasher
 
         private const int VoltageOffset = 10;
 
+        /// <summary>The module's info block (0D), as the programming SGBD reads it.</summary>
+        public byte[] ReadInfo() => Exchange(new byte[] { 0x0D }, NormalTimeoutMs, "info");
+
+        /// <summary>Where the module keeps its programming log, from byte 0x3F of the info block.</summary>
+        public int ReadAifAddress()
+        {
+            byte[] info = ReadInfo();
+            if (info.Length < 0x42)
+                throw new InvalidOperationException("The info block is only " + info.Length + " bytes; no AIF address in it.");
+            return (info[0x3F] << 16) | (info[0x40] << 8) | info[0x41];
+        }
+
+        /// <summary>A plain read, as the diagnostic SGBD does it (06, 32-bit address, length).</summary>
+        public byte[] ReadBytes(int address, int length)
+        {
+            byte[] reply = Exchange(new byte[]
+            {
+                0x06, (byte)(address >> 24), (byte)(address >> 16), (byte)(address >> 8), (byte)address, (byte)length,
+            }, NormalTimeoutMs, "read");
+            int available = Math.Max(0, reply.Length - 4);
+            var data = new byte[Math.Min(length, available)];
+            Array.Copy(reply, 3, data, 0, data.Length);
+            return data;
+        }
+
+        /// <summary>
+        /// Appends one entry to the programming log, the way AIF_SCHREIBEN in
+        /// BMW's programming SGBD does: the first erased slot after the base
+        /// the info block names, a flash-status check on it (sub-status 1),
+        /// then one 07 02 write of the record. Needs the unlocked session the
+        /// calibration write runs in. Returns the slot's address.
+        /// </summary>
+        public int WriteAifRecord(byte[] record, out int slotIndex, out int slotsLeft)
+        {
+            if (record == null || record.Length != Gs20Aif.RecordLength)
+                throw new ArgumentException("An AIF record is " + Gs20Aif.RecordLength + " bytes.", nameof(record));
+
+            int baseAddress = ReadAifAddress();
+            _note("AIF area 0x" + baseAddress.ToString("X6"));
+            int slot = -1;
+            for (int i = 0; i < Gs20Aif.Slots; i++)
+            {
+                int address = baseAddress + i * Gs20Aif.RecordLength;
+                if (Gs20Aif.IsFree(ReadBytes(address, 1))) { slot = i; break; }
+            }
+            if (slot < 0)
+                throw new InvalidOperationException("The programming log is full: all " + Gs20Aif.Slots + " entries are used.");
+
+            int slotAddress = baseAddress + slot * Gs20Aif.RecordLength;
+            byte[] status = Exchange(AddressCommand(0x0F, slotAddress), NormalTimeoutMs, "AIF status");
+            byte? sub = Ds2Telegram.SubStatus(status);
+            if (sub != 1)
+                throw new InvalidOperationException(
+                    "The transmission does not accept a write at 0x" + slotAddress.ToString("X6") + ": " +
+                    (sub.HasValue ? Ds2Telegram.DescribeSubStatus(sub.Value) : "no sub-status") +
+                    " (" + Ds2Telegram.ToHex(status, 12) + ")");
+
+            var payload = new byte[6 + record.Length];
+            payload[0] = 0x07; payload[1] = 0x02;
+            payload[2] = (byte)(slotAddress >> 16); payload[3] = (byte)(slotAddress >> 8); payload[4] = (byte)slotAddress;
+            payload[5] = (byte)record.Length;
+            Array.Copy(record, 0, payload, 6, record.Length);
+            byte[] reply = Exchange(payload, NormalTimeoutMs, "AIF write");
+            sub = Ds2Telegram.SubStatus(reply);
+            if (sub != 1)
+                throw new InvalidOperationException(
+                    "The transmission did not program the AIF entry: " +
+                    (sub.HasValue ? Ds2Telegram.DescribeSubStatus(sub.Value) : "no sub-status") +
+                    " (" + Ds2Telegram.ToHex(reply, 12) + ")");
+
+            slotIndex = slot;
+            slotsLeft = Gs20Aif.Slots - slot - 1;
+            return slotAddress;
+        }
+
         /// <summary>
         /// Starts a session. Without this the module refuses the unlock that
         /// follows, and it refuses it the same way whether the cable is wrong or
         /// the session was simply never opened, which is a confusing place to
         /// land. One command up front removes the whole class of problem.
         /// </summary>
-        public void OpenSession(CancellationToken cancel = default) =>
-            Exchange(new byte[] { 0x05 }, NormalTimeoutMs, "session open", cancel);
+        public void OpenSession(CancellationToken cancel = default)
+        {
+            // A module whose program is erased answers from its boot block,
+            // which refuses the session open (0xA2) because it is already in
+            // programming mode - and then takes unlock, erase and write as
+            // usual. That is the module that most needs writing, so the
+            // refusal is noted rather than fatal.
+            byte[] reply = Exchange(new byte[] { 0x05 }, NormalTimeoutMs, "session open", cancel,
+                                    allowRefused: true);
+            if (Ds2Telegram.Status(reply) == Ds2Telegram.StatusRefused)
+                _note("session open refused (0xA2): the module is already in programming mode, continuing");
+        }
 
         /// <summary>
         /// Takes the module back out of programming mode.
@@ -348,7 +433,8 @@ namespace BmwebFlasher
         }
 
         private byte[] Exchange(byte[] payload, int timeoutMs, string what,
-                                CancellationToken cancel = default, bool allowBusy = false)
+                                CancellationToken cancel = default, bool allowBusy = false,
+                                bool allowRefused = false)
         {
             byte[] telegram = Ds2Telegram.Build(_address, payload);
 
@@ -363,6 +449,7 @@ namespace BmwebFlasher
 
                     if (status == Ds2Telegram.StatusOk) return reply;
                     if (allowBusy && status == Ds2Telegram.StatusBusy) return reply;
+                    if (allowRefused && status == Ds2Telegram.StatusRefused) return reply;
 
                     throw new InvalidOperationException(
                         "The transmission refused the " + what + " request (status " +
