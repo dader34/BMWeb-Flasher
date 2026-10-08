@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <RootNamespace>BmwebFlasher.Tools</RootNamespace>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="System.Text.Encoding.CodePages" Version="8.0.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- The same checksum/signature code the app flashes with, linked in so this
+         stays a console tool without the UI toolkit. -->
+    <Compile Include="..\..\src\BmwebFlasher\Checksums_Signatures.cs" Link="Checksums_Signatures.cs" />
+    <ProjectReference Include="..\..\external\ediabaslib\EdiabasLib\EdiabasLib\EdiabasLib.csproj" SetTargetFramework="TargetFramework=net8.0" GlobalPropertiesToRemove="">
+      <AdditionalProperties>EnableWindowsTargeting=true</AdditionalProperties>
+    </ProjectReference>
+  </ItemGroup>
+</Project>

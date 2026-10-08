@@ -12,6 +12,8 @@
     <PackageReference Include="xunit" Version="2.9.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
     <PackageReference Include="Xunit.SkippableFact" Version="1.5.23" />
+    <!-- Ds2SerialLink; the app gets it through EdiabasLib. -->
+    <PackageReference Include="System.IO.Ports" Version="8.0.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -31,6 +33,8 @@
     <Compile Include="..\..\src\BmwebFlasher\Gs20ProgramWriter.cs" Link="Gs20ProgramWriter.cs" />
     <Compile Include="..\..\src\BmwebFlasher\Gs20DatenFile.cs" Link="Gs20DatenFile.cs" />
     <Compile Include="..\..\src\BmwebFlasher\Gs20Aif.cs" Link="Gs20Aif.cs" />
+    <Compile Include="..\..\src\BmwebFlasher\Emulation.cs" Link="Emulation.cs" />
+    <Compile Include="..\..\src\BmwebFlasher\Ds2SerialLink.cs" Link="Ds2SerialLink.cs" />
   </ItemGroup>
 
 </Project>

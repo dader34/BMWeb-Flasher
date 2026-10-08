@@ -39,6 +39,19 @@ namespace BmwebFlasher
         /// <summary>Append a programming-log (AIF) entry to a module after every flash, as WinKFP does.</summary>
         public bool WriteAif { get; set; } = true;
 
+        // The Emulator screen: where the two emulators are checked out, and
+        // the files each was last booted with.
+        public string Ms45EmuPath { get; set; } = string.Empty;
+        public string Gs20EmuPath { get; set; } = string.Empty;
+        public string EmuDmeFlash { get; set; } = string.Empty;
+        public string EmuDmeMpc { get; set; } = string.Empty;
+        public string EmuTcuImage { get; set; } = string.Empty;
+        // BMW's data files to boot instead of what the images hold: a program (.0PA), a calibration (.0DA).
+        public string EmuDmeProgram { get; set; } = string.Empty;
+        public string EmuDmeCalibration { get; set; } = string.Empty;
+        public string EmuTcuProgram { get; set; } = string.Empty;
+        public string EmuTcuCalibration { get; set; } = string.Empty;
+
         private static string DefaultPort() => Ports.AutoDetect() ?? string.Empty;
     }
 
@@ -181,11 +194,26 @@ namespace BmwebFlasher
             set { Settings.EcuPath = value; Save(); }
         }
 
+        /// <summary>
+        /// The port every job uses. While the app is connected to an emulator
+        /// (the Emulator screen) this is that emulator's K line and nothing
+        /// else: the saved cable is neither returned nor changed, so no job
+        /// can reach a car by accident, and the sweep that looks for a cable
+        /// cannot replace it.
+        /// </summary>
         public static string Port
         {
-            get => Settings.Port;
-            set { Settings.Port = value; Save(); }
+            get => Emulation.Port ?? Settings.Port;
+            set
+            {
+                if (Emulation.Active) return;
+                Settings.Port = value;
+                Save();
+            }
         }
+
+        /// <summary>The cable's port as saved, whatever the app is connected to.</summary>
+        public static string CablePort => Settings.Port;
 
         public static string Theme
         {

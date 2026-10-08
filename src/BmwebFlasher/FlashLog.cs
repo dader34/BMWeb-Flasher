@@ -27,6 +27,7 @@ namespace BmwebFlasher
         // its first note (the module and options) and the last status line.
         private static DateTime _started;
         private static string _operation, _firstNote, _lastStatus;
+        private static string _emulator;         // the emulated module the session ran on, or null for a car
         // The outcome so far: "ok" once a success line was seen, "failed"
         // once a failure was, "ended" otherwise. Judged as the statuses
         // arrive rather than from the last one, because the re-identify
@@ -71,6 +72,9 @@ namespace BmwebFlasher
                     _writer.WriteLine("# BMWeb Flasher log");
                     _writer.WriteLine("# operation: " + operation);
                     _writer.WriteLine("# started:   " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+                    _emulator = Emulation.Label;
+                    if (_emulator != null)
+                        _writer.WriteLine("# target:    " + _emulator + " -- an emulator, not a car");
                     _writer.WriteLine();
                     return _path;
                 }
@@ -110,6 +114,7 @@ namespace BmwebFlasher
                     Result = _result,
                     Log = _path,
                     Files = _filesDir,
+                    Emulator = _emulator,
                 };
                 _writer = null;
                 _path = null;

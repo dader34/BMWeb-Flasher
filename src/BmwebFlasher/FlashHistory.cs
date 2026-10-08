@@ -33,6 +33,8 @@ namespace BmwebFlasher
             public string Log { get; set; }
             /// <summary>The folder holding copies of the images written, when the setting was on.</summary>
             public string Files { get; set; }
+            /// <summary>Set when the session ran on an emulated module rather than a car: which one.</summary>
+            public string Emulator { get; set; }
         }
 
         public static string FilePath => Path.Combine(

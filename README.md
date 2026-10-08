@@ -149,6 +149,62 @@ Make a full backup first.
 - If the files do not match you can render the DME unbootable, recoverable only
   with a BDM tool. The app does basic checking but it is not foolproof.
 
+### Emulator
+
+The **Emulator** screen (the square on the rail) boots an emulated control
+unit and connects the app to it in place of the cable. The emulators are
+separate projects that run the module's own firmware from flash images:
+[`ms45-emu`](../ms45-emu) for the MS45.1 DME and [`gs20-emu`](../gs20-emu)
+for the GS20 transmission. Each puts its K line on a pseudo-terminal, which
+the app opens like a serial port. macOS and Linux only.
+
+- **Files.** The DME boots from an external flash (1 MB) and its MPC flash
+  (448 KB); the transmission from a 512 KB image (a full read, or a file
+  built for writing, which is run on the stock boot block). Either can be
+  booted on BMW's own files instead, as an alternative to a full image:
+  **Program (.0PA)** boots a program from SP-Daten and **Calibration
+  (.0DA)** a calibration. They are greyed out while a full image is chosen
+  (the transmission's 512 KB image, or both of the DME's flashes); *Clear*
+  the image to use them. Nothing else has to be chosen: neither file has
+  a boot loader, so the transmission's go on gs20-emu's stock image and
+  the DME's program on the boot loader ms45-emu keeps
+  (`images/stock_boot.bin`, the first 256 KB of an external flash read),
+  or on that of an external flash read when one is chosen without an MPC
+  flash. The emulators' own boot loaders come with an empty programming
+  log (AIF), so a module booted this way shows no VIN and no history; a
+  read you choose keeps its own. A program with no calibration chosen keeps the
+  read's when the two go together and otherwise gets the first one in its
+  own folder that does, which the label then names. *Continue on
+  the last session's flash* boots on what the emulated module held when it
+  was last shut down instead, for example a flash that was interrupted.
+- **Boot / Shut Down.** Booting one connects the app to it. Shutting it
+  down keeps its flash (and the DME's EEPROM) for *Continue*; closing the
+  app shuts both down.
+- **Ignition.** The DME's switch is terminal 15: off, the program does its
+  after-run and the DME is then without power; on again it starts from its
+  reset vector, as after a key cycle. The transmission's is its supply: off
+  and on is a power cycle. This is how a freshly written program is shown
+  to survive one, or not.
+- **The app talks to.** The cable, the emulated DME or the emulated
+  transmission. While an emulator is chosen every screen works on it:
+  identify, read, flash, fault codes, live log. The saved cable port is
+  neither used nor changed, and the sweep that looks for a cable is off, so
+  nothing can reach a car by accident. A yellow bar above the control unit
+  box and the window title say **EMULATED DME** or **EMULATED TCU** for as
+  long as that lasts, and each session's log and History entry is marked
+  the same way.
+
+Each emulator also serves its K line on a WebSocket for the browser's
+BMWeb (the DME on `ws://localhost:8767`, the transmission on
+`ws://localhost:8770`): **Open in BMWeb** opens the site on it, and any
+BMWeb takes it with `?gateway=ws://localhost:PORT` on its URL. One page at
+a time; a second is refused until the first leaves.
+
+The emulator folders are found next to this repository; the screen has a
+button for each if they live elsewhere. The transmission needs PyPy to keep
+real time (`gs20-emu/.pypy`, or `pypy3` on the PATH); under plain Python it
+answers too slowly and the app says so when it is booted.
+
 ### Fault codes
 
 On the **Fault Codes** tab, choose the **Module** (DME or TCU), then **Read

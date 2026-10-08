@@ -31,6 +31,9 @@ namespace BmwebFlasher
         protected override void OnClosed(EventArgs e)
         {
             base.OnClosed(e);
+            // The emulators are child processes; asked to quit, they save what
+            // their flash holds. Nothing may be left running behind the app.
+            Emulation.StopAll();
             Environment.Exit(0);
         }
 
@@ -52,6 +55,7 @@ namespace BmwebFlasher
             FlashHistory.Changed += () => Dispatcher.UIThread.Post(RefreshHistory);
             RefreshHistory();
             RefreshRail();
+            InitEmulator();
             // The flashing module starts UNSELECTED: the user must choose DME or
             // TCU before any control unit's buttons appear. This keeps the two
             // modules' actions from ever being confused.
@@ -196,6 +200,7 @@ namespace BmwebFlasher
             RailLive.Classes.Set("current", MainTabs.SelectedIndex == 2);
             RailHistory.Classes.Set("current", MainTabs.SelectedIndex == 3);
             RailSettings.Classes.Set("current", MainTabs.SelectedIndex == 4);
+            RailEmulator.Classes.Set("current", MainTabs.SelectedIndex == 5);
         }
 
         private void UpdateProgressBar(uint progress) =>
@@ -276,7 +281,7 @@ namespace BmwebFlasher
                     Time = e.Started.ToString("yyyy-MM-dd HH:mm"),
                     Operation = FlashHistory.Describe(e.Operation),
                     Result = e.Result ?? string.Empty,
-                    Car = string.Join(" ", new[] { e.Vin, e.Module }.Where(s => !string.IsNullOrEmpty(s))),
+                    Car = string.Join(" ", new[] { e.Emulator == null ? null : "EMULATOR:", e.Vin, e.Module }.Where(s => !string.IsNullOrEmpty(s))),
                     Details = e.Details ?? string.Empty,
                     Status = (e.Status ?? string.Empty) + (e.Seconds > 0 ? "  (" + e.Seconds + " s)" : string.Empty),
                     Log = e.Log,
@@ -543,6 +548,13 @@ namespace BmwebFlasher
 
         private async void SetPort_Click(object sender, RoutedEventArgs e)
         {
+            if (Emulation.Active)
+            {
+                await MessageAsync("The app is connected to the " + Emulation.Label + ", not to a cable.\n\n" +
+                                   "Go back to the cable on the Emulator screen to choose a serial port.", "Serial Port");
+                return;
+            }
+
             // Auto-detect ranks likely cables first (FTDI / K+DCAN); the manual
             // box is the fallback for anything not detected.
             var ports = Ports.List();
@@ -672,6 +684,7 @@ namespace BmwebFlasher
             RefreshNoUpshiftGate();
             RefreshTcuFullBinVisibility();
             SetStatus("Module: " + (_flashTcu ? "TCU (transmission)" : "DME (engine)"));
+            EmulatorFollowModule();
         }
 
         /// <summary>
@@ -3239,6 +3252,10 @@ namespace BmwebFlasher
         /// </summary>
         private void FindTheCableIfNeeded()
         {
+            // Connected to an emulator there is no cable to find, and no other
+            // port may be tried: a car could be on it.
+            if (Emulation.Active) return;
+
             if (_portProven && Ports.List().Contains(Global.Port)) return;
 
             var candidates = new List<string>();
@@ -3296,6 +3313,11 @@ namespace BmwebFlasher
 
         private static string CheckPort(string port)
         {
+            if (Emulation.Active && !Emulation.Connected.Ready)
+                return "The app is connected to the emulated " + Emulation.Connected.Name + ", which is " +
+                       (Emulation.Connected.Running ? "still booting" : "not running") + ".\n\n" +
+                       "Boot it on the Emulator screen, or go back to the cable there.";
+
             if (string.IsNullOrWhiteSpace(port))
                 return "No serial port is set. Use Set Serial Port to choose your cable.";
 

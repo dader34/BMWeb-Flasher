@@ -25,6 +25,8 @@
                   IsEnabled="{Binding #LiveTab.IsEnabled}" ToolTip.Tip="Live Log"/>
           <Button x:Name="RailHistory" Classes="rail" Content="&#x27F2;" Click="RailHistory_Click"
                   ToolTip.Tip="History"/>
+          <Button x:Name="RailEmulator" Classes="rail" Content="&#x25A3;" Click="RailEmulator_Click"
+                  ToolTip.Tip="Emulator"/>
           <Button x:Name="RailSettings" Classes="rail" Content="&#x2699;&#xFE0E;" Click="RailSettings_Click"
                   ToolTip.Tip="Settings"/>
         </StackPanel>
@@ -35,6 +37,17 @@
 
     <!-- ============ top bar ============ -->
     <Border Grid.Column="1" Grid.Row="0" Classes="bar" BorderThickness="0,0,0,1" Padding="14,10">
+      <StackPanel Spacing="8">
+      <!-- Shown for as long as the app is connected to an emulator: nothing
+           it does then reaches a car, and nobody should have to wonder. -->
+      <Border x:Name="EmulatorBanner" Classes="emulator" IsVisible="False">
+        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+          <TextBlock x:Name="EmulatorBannerText" Grid.Column="0" TextWrapping="Wrap" VerticalAlignment="Center"/>
+          <Button x:Name="EmulatorBannerCable" Grid.Column="1" Content="Back to the cable" Classes="key"
+                  Click="EmulatorUseCable_Click"
+                  ToolTip.Tip="Connect the app to the cable again. The emulator keeps running."/>
+        </Grid>
+      </Border>
       <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">
         <!-- Choose the module first; the DME and TCU controls are shown
              exclusively so their buttons can never be confused. -->
@@ -51,6 +64,7 @@
         <Button x:Name="IdentifyDME" Grid.Column="2" Content="Identify ECU" Classes="primary"
                 MinWidth="120" Click="IdentifyDME_Click" IsEnabled="False"/>
       </Grid>
+      </StackPanel>
     </Border>
 
     <!-- ============ screen ============ -->
@@ -481,6 +495,153 @@
             </StackPanel>
           </Border>
         </StackPanel>
+      </TabItem>
+
+      <!-- ============ Emulator ============ -->
+      <!-- Boots an emulated control unit (ms45-emu, gs20-emu) on chosen
+           files and connects the app to it in place of the cable. Kept last
+           so the other screens keep their positions. -->
+      <TabItem x:Name="EmulatorTab" Header="Emulator">
+        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+          <StackPanel Spacing="12">
+            <TextBlock Classes="dim" TextWrapping="Wrap"
+                       Text="An emulated control unit runs the module's own firmware from the files chosen here and answers on its K line like the real one. While the app is connected to one, every screen works on it instead of the cable, and the bar at the top says so."/>
+
+            <Border Classes="section">
+              <StackPanel Spacing="8">
+                <TextBlock Classes="code" Text="THE APP TALKS TO"/>
+                <StackPanel Orientation="Horizontal" Spacing="16">
+                  <RadioButton x:Name="EmuConnectCable" GroupName="EmuConnect" IsChecked="True"
+                               Content="The cable (a real car)" Click="EmuConnect_Click"/>
+                  <RadioButton x:Name="EmuConnectDme" GroupName="EmuConnect" IsEnabled="False"
+                               Content="Emulated DME" Click="EmuConnect_Click"/>
+                  <RadioButton x:Name="EmuConnectTcu" GroupName="EmuConnect" IsEnabled="False"
+                               Content="Emulated TCU" Click="EmuConnect_Click"/>
+                </StackPanel>
+                <TextBlock x:Name="EmuConnect_Box" Classes="faint" TextWrapping="Wrap"/>
+              </StackPanel>
+            </Border>
+
+            <Border Classes="section">
+              <StackPanel Spacing="8">
+                <TextBlock Classes="code" Text="ENGINE CONTROL UNIT  ·  MS45.1"/>
+                <Grid ColumnDefinitions="200,*,Auto" RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="6" ColumnSpacing="10">
+                  <Button x:Name="EmuDmeFlash" Grid.Row="0" Grid.Column="0" Content="External Flash..."
+                          HorizontalAlignment="Stretch" Click="EmuDmeFlash_Click"
+                          ToolTip.Tip="A 1 MB external flash read. With the MPC flash below it is a full pair and the emulated DME boots from it. Without one, a program file can be chosen, which is written over this read's boot loader."/>
+                  <TextBlock x:Name="EmuDmeFlash_Box" Grid.Row="0" Grid.Column="1" Classes="mono dim"
+                             VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Text="(none)"/>
+                  <Button x:Name="EmuDmeFlashClear" Grid.Row="0" Grid.Column="2" Content="Clear"
+                          Click="EmuDmeFlashClear_Click"/>
+                  <Button x:Name="EmuDmeMpc" Grid.Row="1" Grid.Column="0" Content="MPC Flash..."
+                          HorizontalAlignment="Stretch" Click="EmuDmeMpc_Click"
+                          ToolTip.Tip="The 448 KB internal flash image that belongs to the external flash. Clear it to boot a program file instead, which brings its own."/>
+                  <TextBlock x:Name="EmuDmeMpc_Box" Grid.Row="1" Grid.Column="1" Classes="mono dim"
+                             VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Text="(none)"/>
+                  <Button x:Name="EmuDmeMpcClear" Grid.Row="1" Grid.Column="2" Content="Clear"
+                          Click="EmuDmeMpcClear_Click"/>
+                  <Button x:Name="EmuDmeProgram" Grid.Row="2" Grid.Column="0" Content="Program (.0PA)..."
+                          HorizontalAlignment="Stretch" Click="EmuDmeProgram_Click"
+                          ToolTip.Tip="One of BMW's MS45.1 program files, as in SP-Daten (MDS451), in place of a full pair. Nothing else is needed: it is put on the boot loader ms45-emu keeps, or on the external flash read's when one is chosen. Greyed out while both the external flash and the MPC flash are chosen."/>
+                  <TextBlock x:Name="EmuDmeProgram_Box" Grid.Row="2" Grid.Column="1" Classes="mono dim"
+                             VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Text="(none)"/>
+                  <Button x:Name="EmuDmeProgramClear" Grid.Row="2" Grid.Column="2" Content="Clear"
+                          Click="EmuDmeProgramClear_Click"/>
+                  <Button x:Name="EmuDmeCalibration" Grid.Row="3" Grid.Column="0" Content="Calibration (.0DA)..."
+                          HorizontalAlignment="Stretch" Click="EmuDmeCalibration_Click"
+                          ToolTip.Tip="Optional, with a program file: one of BMW's calibration files. A program without one keeps the read's calibration when that is made for it, and otherwise gets the first .0DA in its own folder that is. Greyed out while both the external flash and the MPC flash are chosen."/>
+                  <TextBlock x:Name="EmuDmeCalibration_Box" Grid.Row="3" Grid.Column="1" Classes="mono dim"
+                             VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Text="(none)"/>
+                  <Button x:Name="EmuDmeCalibrationClear" Grid.Row="3" Grid.Column="2" Content="Clear"
+                          Click="EmuDmeCalibrationClear_Click"/>
+                </Grid>
+                <StackPanel Orientation="Horizontal" Spacing="16">
+                  <CheckBox x:Name="EmuDmeResume" Content="Continue on the last session's flash"
+                            ToolTip.Tip="Boot on what the emulated DME's flash held when it was last shut down, for example a flash that was interrupted, instead of the files above."/>
+                  <CheckBox x:Name="EmuDmeTurbo" Content="Turbo"
+                            ToolTip.Tip="Answer as fast as the emulator can instead of at the K line's pace. Quicker flashes; not for checking timing."/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                  <Button x:Name="EmuDmeBoot" Content="Boot" Classes="primary" MinWidth="90" Click="EmuDmeBoot_Click"/>
+                  <Button x:Name="EmuDmeStop" Content="Shut Down" MinWidth="90" Click="EmuDmeStop_Click" IsEnabled="False"
+                          ToolTip.Tip="Stops the emulator. What its flash and EEPROM hold is kept for Continue."/>
+                  <Button x:Name="EmuDmeBmweb" Content="Open in BMWeb" MinWidth="90" Click="EmuDmeBmweb_Click" IsEnabled="False"
+                          ToolTip.Tip="BMWeb in the browser with this emulated DME as its cable (its WebSocket on localhost:8767, which the status line shows). One page at a time: a second is refused until the first leaves. Any BMWeb takes it with ?gateway=ws://localhost:8767 on its URL."/>
+                  <CheckBox x:Name="EmuDmeIgnition" Content="Ignition" Margin="12,0,0,0" IsEnabled="False"
+                            Click="EmuDmeIgnition_Click"
+                            ToolTip.Tip="Terminal 15. Off, the program does its after-run and the DME is then without power (a DME in its boot loader is off at once). On again it starts from its reset vector, as after a key cycle in the car."/>
+                </StackPanel>
+                <TextBlock x:Name="EmuDmeStatus_Box" Classes="mono" TextWrapping="Wrap" Text="not running"/>
+              </StackPanel>
+            </Border>
+
+            <Border Classes="section">
+              <StackPanel Spacing="8">
+                <TextBlock Classes="code" Text="TRANSMISSION  ·  GS20"/>
+                <Grid ColumnDefinitions="200,*,Auto" RowDefinitions="Auto,Auto,Auto" RowSpacing="6" ColumnSpacing="10">
+                  <Button x:Name="EmuTcuImage" Grid.Row="0" Grid.Column="0" Content="Image (512 KB)..."
+                          HorizontalAlignment="Stretch" Click="EmuTcuImage_Click"
+                          ToolTip.Tip="A 512 KB image: a full read, or a file built for writing, which is run on the stock boot block. Clear it to boot a program or calibration file instead."/>
+                  <TextBlock x:Name="EmuTcuImage_Box" Grid.Row="0" Grid.Column="1" Classes="mono dim"
+                             VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Text="(none)"/>
+                  <Button x:Name="EmuTcuImageClear" Grid.Row="0" Grid.Column="2" Content="Clear"
+                          Click="EmuTcuImageClear_Click"/>
+                  <Button x:Name="EmuTcuProgram" Grid.Row="1" Grid.Column="0" Content="Program (.0PA)..."
+                          HorizontalAlignment="Stretch" Click="EmuTcuProgram_Click"
+                          ToolTip.Tip="One of BMW's GS20 program files, as in SP-Daten (GD20), in place of a full image: it is put on the boot block of gs20-emu's stock image. Greyed out while a full image is chosen."/>
+                  <TextBlock x:Name="EmuTcuProgram_Box" Grid.Row="1" Grid.Column="1" Classes="mono dim"
+                             VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Text="(none)"/>
+                  <Button x:Name="EmuTcuProgramClear" Grid.Row="1" Grid.Column="2" Content="Clear"
+                          Click="EmuTcuProgramClear_Click"/>
+                  <Button x:Name="EmuTcuCalibration" Grid.Row="2" Grid.Column="0" Content="Calibration (.0DA)..."
+                          HorizontalAlignment="Stretch" Click="EmuTcuCalibration_Click"
+                          ToolTip.Tip="Optional: one of BMW's calibration files, on gs20-emu's stock image. A program without one keeps the stock calibration when the boot block takes the two together, and otherwise gets the first .0DA in its own folder that it does take. Greyed out while a full image is chosen."/>
+                  <TextBlock x:Name="EmuTcuCalibration_Box" Grid.Row="2" Grid.Column="1" Classes="mono dim"
+                             VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Text="(none)"/>
+                  <Button x:Name="EmuTcuCalibrationClear" Grid.Row="2" Grid.Column="2" Content="Clear"
+                          Click="EmuTcuCalibrationClear_Click"/>
+                </Grid>
+                <CheckBox x:Name="EmuTcuResume" Content="Continue on the last session's flash"
+                          ToolTip.Tip="Boot on what the emulated transmission's flash held when it was last shut down instead of the file above."/>
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                  <Button x:Name="EmuTcuBoot" Content="Boot" Classes="primary" MinWidth="90" Click="EmuTcuBoot_Click"/>
+                  <Button x:Name="EmuTcuStop" Content="Shut Down" MinWidth="90" Click="EmuTcuStop_Click" IsEnabled="False"
+                          ToolTip.Tip="Stops the emulator. A flash a write has changed is kept for Continue."/>
+                  <Button x:Name="EmuTcuBmweb" Content="Open in BMWeb" MinWidth="90" Click="EmuTcuBmweb_Click" IsEnabled="False"
+                          ToolTip.Tip="BMWeb in the browser with this emulated transmission as its cable (its WebSocket on localhost:8770, which the status line shows). One page at a time. Any BMWeb takes it with ?gateway=ws://localhost:8770 on its URL."/>
+                  <CheckBox x:Name="EmuTcuPower" Content="Power (ignition)" Margin="12,0,0,0" IsEnabled="False"
+                            Click="EmuTcuPower_Click"
+                            ToolTip.Tip="The transmission's supply. Off and on again is a power cycle: RAM cleared, a start from the reset vector on the flash as it was left."/>
+                </StackPanel>
+                <TextBlock x:Name="EmuTcuStatus_Box" Classes="mono" TextWrapping="Wrap" Text="not running"/>
+              </StackPanel>
+            </Border>
+
+            <Border Classes="section">
+              <StackPanel Spacing="8">
+                <TextBlock Classes="code" Text="EMULATOR FOLDERS"/>
+                <Grid ColumnDefinitions="200,*" RowDefinitions="Auto,Auto" RowSpacing="6" ColumnSpacing="10">
+                  <Button x:Name="EmuFolderMs45" Grid.Row="0" Grid.Column="0" Content="ms45-emu..."
+                          HorizontalAlignment="Stretch" Click="EmuFolderMs45_Click"
+                          ToolTip.Tip="The ms45-emu checkout (the folder with tools/kline.py)."/>
+                  <TextBlock x:Name="EmuFolderMs45_Box" Grid.Row="0" Grid.Column="1" Classes="mono dim"
+                             VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                  <Button x:Name="EmuFolderGs20" Grid.Row="1" Grid.Column="0" Content="gs20-emu..."
+                          HorizontalAlignment="Stretch" Click="EmuFolderGs20_Click"
+                          ToolTip.Tip="The gs20-emu checkout (the folder with tools/kline.py)."/>
+                  <TextBlock x:Name="EmuFolderGs20_Box" Grid.Row="1" Grid.Column="1" Classes="mono dim"
+                             VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                </Grid>
+              </StackPanel>
+            </Border>
+
+            <Border Classes="log" MinHeight="110" MaxHeight="220">
+              <ScrollViewer x:Name="EmuLogScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <TextBlock x:Name="EmuLog" Classes="mono" TextWrapping="Wrap" LineHeight="18"/>
+              </ScrollViewer>
+            </Border>
+          </StackPanel>
+        </ScrollViewer>
       </TabItem>
 
     </TabControl>

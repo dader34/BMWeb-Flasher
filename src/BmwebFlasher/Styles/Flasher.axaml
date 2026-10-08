@@ -63,6 +63,19 @@
     <Setter Property="Background" Value="{DynamicResource BwBarBrush}"/>
     <Setter Property="BorderBrush" Value="{DynamicResource BwLineBrush}"/>
   </Style>
+  <!-- The emulator banner. Its colours are fixed rather than taken from
+       the skin: it has to look the same, and unlike anything else, in all of them. -->
+  <Style Selector="Border.emulator">
+    <Setter Property="Background" Value="#F2B600"/>
+    <Setter Property="BorderBrush" Value="#8A6500"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="CornerRadius" Value="{DynamicResource BwRadius}"/>
+    <Setter Property="Padding" Value="10,6"/>
+  </Style>
+  <Style Selector="Border.emulator TextBlock">
+    <Setter Property="Foreground" Value="#1A1400"/>
+    <Setter Property="FontWeight" Value="SemiBold"/>
+  </Style>
   <Style Selector="Border.pill">
     <Setter Property="Background" Value="{DynamicResource BwPanelBrush}"/>
     <Setter Property="BorderBrush" Value="{DynamicResource BwLineBrush}"/>

@@ -46,26 +46,52 @@ namespace BmwebFlasher
         private readonly SerialPort _port;
         private readonly Action<string> _trace;
 
+        // An emulated module's K line is a pseudo-terminal, which has no modem
+        // lines and no line rate of its own: setting DTR or RTS on one fails,
+        // and so does any rate the terminal driver has no constant for
+        // (125000 is one). The emulator hears the bytes whatever rate this end
+        // believes in, so on such a port the lines are left alone and the rate
+        // is only kept track of here.
+        private readonly bool _emulated;
+        private int _baud = DefaultBaud;
+
         public Ds2SerialLink(string portName, Action<string> trace = null)
         {
             if (string.IsNullOrWhiteSpace(portName))
                 throw new ArgumentException("No serial port was given.", nameof(portName));
 
             _trace = trace ?? (_ => { });
+            _emulated = Emulation.IsEmulatorPort(portName);
             _port = new SerialPort(portName, DefaultBaud, Parity.Even, 8, StopBits.One)
             {
                 ReadTimeout = 2000,
                 WriteTimeout = 2000,
                 Handshake = Handshake.None,
-                DtrEnable = true,
-                RtsEnable = true,
             };
+            if (!_emulated)
+            {
+                _port.DtrEnable = true;
+                _port.RtsEnable = true;
+            }
             _port.Open();
             DiscardStaleBytes();
         }
 
         /// <summary>The rate the link is currently running at.</summary>
-        public int Baud => _port.BaudRate;
+        public int Baud => _baud;
+
+        private void SetBaud(int baud)
+        {
+            _baud = baud;
+            try
+            {
+                _port.BaudRate = baud;
+            }
+            catch (Exception) when (_emulated)
+            {
+                // see _emulated
+            }
+        }
 
         /// <summary>
         /// Asks the module to move to another rate, then follows it.
@@ -80,7 +106,7 @@ namespace BmwebFlasher
         /// </summary>
         public void SwitchBaud(int baud, byte moduleFlag = 1)
         {
-            if (baud == _port.BaudRate) return;
+            if (baud == _baud) return;
 
             byte[] payload =
             {
@@ -89,7 +115,7 @@ namespace BmwebFlasher
                 moduleFlag,
             };
 
-            int previous = _port.BaudRate;
+            int previous = _baud;
 
             // The request may be acted on even when its acknowledgement never
             // reaches us, which would leave the module at the new rate while we
@@ -136,7 +162,7 @@ namespace BmwebFlasher
         /// </summary>
         private bool Settle(int baud)
         {
-            _port.BaudRate = baud;
+            SetBaud(baud);
             DiscardStaleBytes();
             Thread.Sleep(InterTelegramDelayMs);
 
